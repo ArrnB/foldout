@@ -12,7 +12,7 @@ Policies change often. Check each step against the linked Google pages before yo
 | Builds an Android App Bundle (`.aab`), the format Play requires for new apps | `./gradlew bundleRelease` |
 | Release signing reads your upload key from `android/keystore.properties`, which git ignores | `android/app/build.gradle.kts`, `android/.gitignore` |
 | Code and resources shrunk with R8 (about 300 KB) | release build type |
-| No permissions, no network access, no data collected. This makes the Data safety form and the review simple. | `AndroidManifest.xml` |
+| Only one permission (the camera, for the live viewfinder), no network access, no data collected. This makes the Data safety form and the review simple. | `AndroidManifest.xml` |
 | Privacy policy page (Play requires one even for apps that collect nothing) | https://arrnb.github.io/foldout/privacy.html |
 | App icon (adaptive, plus a 512×512 PNG for the listing) | `android/app/src/main/res`, `icons/icon-512.png` |
 
@@ -60,7 +60,7 @@ Raise `versionCode` (and `versionName`) in `android/app/build.gradle.kts` for ev
 
 - **App content**:
   - **Privacy policy:** `https://arrnb.github.io/foldout/privacy.html`
-  - **Data safety:** "No data collected" and "No data shared". The app has no internet permission.
+  - **Data safety:** "No data collected" and "No data shared". Camera frames are processed on the device only, and the app has no internet permission.
   - **Ads:** No ads.
   - **Content rating questionnaire:** a utility with no user-generated sharing; expect "Everyone".
   - **Target audience:** adults/general (not designed for children).

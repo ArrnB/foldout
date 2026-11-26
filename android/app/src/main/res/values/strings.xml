@@ -3,4 +3,5 @@
     <string name="app_name">Foldout</string>
     <string name="saved_to">Saved %1$s to Downloads/Foldout</string>
     <string name="save_failed">Couldn\'t save %1$s</string>
+    <string name="camera_refused">Camera permission is off, so choose a photo instead. You can turn it on in Settings › Apps › Foldout.</string>
 </resources>

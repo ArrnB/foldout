@@ -4,7 +4,7 @@
 // install; afterwards the cached copy is served at once and refreshed in
 // the background, so a new version shows up on the next visit.
 // Bump VERSION when the list of files changes.
-const VERSION = "foldout-v1";
+const VERSION = "foldout-v2";
 const FILES = [
   "./",
   "./foldout-scanner.html",

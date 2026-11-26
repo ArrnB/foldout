@@ -14,12 +14,13 @@ Putting it on the Google Play Store: see [PLAY_STORE.md](PLAY_STORE.md).
 
 `android/` is a minimal Kotlin app that shows `foldout-scanner.html` in a WebView. The HTML is copied in from the repository root at build time, so the website and the app are always the same scanner. The app adds only what a web page cannot do by itself:
 
-- **Take Photo** opens the phone's camera app; **Choose from Library** opens the system photo picker
+- **Take Photo** opens Foldout's own live camera (see *Live camera* above); **Choose from Library** opens the system photo picker
 - **Save as PDF / images** writes to *Downloads/Foldout* (through MediaStore, so no storage permission)
 - The **Back** button steps back through the scanner's screens and closes the app from the home screen
-- If Android stops the app while the camera is open (common on low memory), the photo is still delivered when it comes back
+- If the camera permission is refused, Take Photo falls back to the photo picker
+- If Android stops the app while the phone's camera app is open (common on low memory), the photo is still delivered when it comes back
 
-It asks for **no permissions at all**, not even internet: the page is bundled inside the app.
+It asks for **one permission, the camera**, for the live viewfinder, and only the first time you tap Take Photo. Frames are looked at on the phone and never leave it. It has **no internet permission**: the page is bundled inside the app.
 
 Build it with Android Studio (open the `android/` folder), or from the command line:
 
@@ -34,8 +35,14 @@ GitHub Actions builds the app on every push and attaches the debug APK to each r
 ## Features
 
 ### Capture
-- "Scan page" opens a choice of **Take Photo** (direct camera launch) or **Choose from Library** (existing photo)
-- Works via native `<input type="file">`, so it's compatible across iOS/Android browsers without any permissions setup beyond the OS camera prompt
+- "Scan page" opens a choice of **Take Photo** or **Choose from Library** (existing photo)
+
+### Live camera with auto-capture
+- **Take Photo** opens a live viewfinder inside Foldout. About seven times a second the picture is run through the page detector, and the page is outlined as it comes into frame
+- With **Auto** on (the switch at the top right, remembered), once the page has been found with confidence and holds still for about a second, the ring on the shutter fills and the photo is taken by itself, then cropped and straightened straight away
+- The shutter always works by hand; an outline the detector is unsure of opens the corner screen instead of being cropped blindly
+- Where the live camera can't open (permission refused, older browsers), Take Photo uses the phone's normal camera route instead
+- For testing without a camera, `foldout-scanner.html?fakecam=tests/scenes/persp_a.jpg` plays a picture as the camera feed (it slides in, then shakes slightly)
 
 ### Automatic page detection
 - When a photo comes in, Foldout finds the page and puts the four corners on it

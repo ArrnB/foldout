@@ -176,6 +176,43 @@
   .scan-menu-item:active{ background:var(--surface); }
   .scan-menu-item svg{ color:var(--muted); flex-shrink:0; }
 
+  /* ---- Camera screen ---- */
+  #screen-camera{ background:#000; }
+  .cam-stage{ flex:1; min-height:0; position:relative; overflow:hidden; background:#000; }
+  .cam-stage video{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+  .cam-svg{ position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+  #cam-quad{ fill:rgba(61,90,254,.18); stroke:var(--accent); stroke-width:3; stroke-linejoin:round; transition:fill .2s, stroke .2s; }
+  #cam-quad.steady{ fill:rgba(52,211,153,.20); stroke:var(--good); }
+  .cam-top{
+    position:absolute; left:0; right:0; top:0; display:flex; justify-content:space-between; align-items:center;
+    padding: max(14px, env(safe-area-inset-top)) 16px 12px;
+    background:linear-gradient(to bottom, rgba(0,0,0,.55), transparent);
+  }
+  .cam-icon-btn{
+    width:38px; height:38px; border-radius:50%; background:rgba(255,255,255,.14);
+    border:1px solid rgba(255,255,255,.25); display:flex; align-items:center; justify-content:center; cursor:pointer;
+  }
+  .cam-auto{
+    font-family:var(--sans); font-weight:650; font-size:13px; padding:8px 14px; border-radius:20px; cursor:pointer;
+    background:rgba(255,255,255,.14); color:#fff; border:1px solid rgba(255,255,255,.25);
+  }
+  .cam-auto[aria-pressed="true"]{ background:var(--accent); border-color:var(--accent); }
+  .cam-status{
+    position:absolute; left:50%; bottom:18px; transform:translateX(-50%);
+    background:rgba(0,0,0,.6); color:#fff; font-size:13px; font-weight:600; padding:8px 14px; border-radius:20px;
+    white-space:nowrap; pointer-events:none;
+  }
+  .cam-bottom{
+    flex-shrink:0; display:flex; justify-content:center; align-items:center;
+    padding:18px 16px max(22px, env(safe-area-inset-bottom)); background:#000;
+  }
+  .cam-shutter{ position:relative; width:80px; height:80px; border:none; background:none; padding:0; cursor:pointer; }
+  .cam-shutter svg{ position:absolute; inset:0; transform:rotate(-90deg); }
+  .cam-ring-bg{ fill:none; stroke:rgba(255,255,255,.35); stroke-width:4; }
+  .cam-ring{ fill:none; stroke:var(--good); stroke-width:4; stroke-linecap:round; stroke-dasharray:226.2; stroke-dashoffset:226.2; }
+  .cam-shutter-dot{ position:absolute; inset:9px; border-radius:50%; background:#fff; }
+  .cam-shutter:active .cam-shutter-dot{ transform:scale(.92); }
+
   /* ---- Crop screen ---- */
   .crop-stage{
     flex:1; min-height:0; position:relative; background:#0B0C0E;
@@ -428,7 +465,7 @@
 
       <div id="empty-state" class="empty-state" style="display:flex;">
         <h2>No pages yet</h2>
-        <p>Capture a document to get started. Corners get adjusted by hand next — no auto-detect guesswork.</p>
+        <p>Capture a document to get started.</p>
       </div>
 
       <div id="page-grid" class="page-grid" style="display:none;"></div>
@@ -445,7 +482,7 @@
           <span id="add-page-btn-label">Scan page</span>
         </button>
         <div class="scan-menu" id="scan-menu" hidden>
-          <label class="scan-menu-item" for="camera-input">
+          <label class="scan-menu-item" for="camera-input" id="take-photo-item">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M4 8C4 6.34315 5.34315 5 7 5H8.5L9.5 3H14.5L15.5 5H17C18.6569 5 20 6.34315 20 8V16C20 17.6569 18.6569 19 17 19H7C5.34315 19 4 17.6569 4 16V8Z" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="12" r="3.2" stroke="currentColor" stroke-width="1.6"/></svg>
             Take Photo
           </label>
@@ -465,6 +502,29 @@
   <!-- hidden native camera/file trigger -->
   <input type="file" id="camera-input" accept="image/*" capture="environment">
   <input type="file" id="gallery-input" accept="image/*">
+
+  <!-- ============ CAMERA SCREEN ============
+       A live viewfinder: the page is outlined as soon as it is found, and
+       with Auto on the photo is taken by itself once the page holds still. -->
+  <section class="screen" id="screen-camera">
+    <div class="cam-stage" id="cam-stage">
+      <video id="cam-video" playsinline muted autoplay></video>
+      <svg class="cam-svg" id="cam-svg"><polygon id="cam-quad" points=""></polygon></svg>
+      <div class="cam-top">
+        <button class="cam-icon-btn" id="cam-close" aria-label="close camera">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6L18 18" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+        <button class="cam-auto" id="cam-auto" aria-pressed="true">Auto</button>
+      </div>
+      <div class="cam-status" id="cam-status">Starting camera…</div>
+    </div>
+    <div class="cam-bottom">
+      <button class="cam-shutter" id="cam-shutter" aria-label="take photo">
+        <svg viewBox="0 0 80 80"><circle class="cam-ring-bg" cx="40" cy="40" r="36"/><circle class="cam-ring" id="cam-ring" cx="40" cy="40" r="36"/></svg>
+        <span class="cam-shutter-dot"></span>
+      </button>
+    </div>
+  </section>
 
   <!-- ============ CROP SCREEN ============ -->
   <section class="screen" id="screen-crop">
@@ -698,6 +758,7 @@
    "doc-title","page-count-label","empty-state","page-grid","toast",
    "crop-img","crop-svg","crop-wrap","crop-stage","crop-magnifier","crop-confirm","crop-cancel","crop-reset","scan-beam",
    "crop-hint","auto-crop",
+   "take-photo-item","cam-stage","cam-video","cam-svg","cam-quad","cam-close","cam-auto","cam-status","cam-shutter","cam-ring",
    "crop-zoom-in","crop-zoom-out",
    "filter-preview-img","filter-stage","filter-rail","filter-confirm","filter-back","filter-fullscreen-btn",
    "filter-zoom-in","filter-zoom-out",
@@ -992,7 +1053,9 @@
   const SOURCE_MAX = 4096;
   let capturedUrl = null;
 
-  function loadIntoCropper(file){
+  // hint: corners found live by the camera, as fractions of the photo's
+  // width and height. Used if detecting on the still photo finds nothing.
+  function loadIntoCropper(file, hint){
     // An object URL lets the browser read the file directly, instead of
     // copying a 10+ MB photo into a base64 string first.
     if(capturedUrl) URL.revokeObjectURL(capturedUrl);
@@ -1001,7 +1064,7 @@
     img.onload = () => {
       const longest = Math.max(img.naturalWidth, img.naturalHeight);
       if(longest <= SOURCE_MAX){
-        showInCropper(img, capturedUrl);
+        showInCropper(img, capturedUrl, hint);
         return;
       }
       const scale = SOURCE_MAX / longest;
@@ -1013,7 +1076,7 @@
         URL.revokeObjectURL(capturedUrl);
         capturedUrl = URL.createObjectURL(blob);
         const small = new Image();
-        small.onload = () => showInCropper(small, capturedUrl);
+        small.onload = () => showInCropper(small, capturedUrl, hint);
         small.src = capturedUrl;
       }, "image/jpeg", 0.95);
     };
@@ -1021,9 +1084,12 @@
     img.src = capturedUrl;
   }
 
-  function showInCropper(img, url){
+  function showInCropper(img, url, hint){
     capturedImg = img;
-    detected = detectInImage(img);
+    detected = detectInImage(img) || (hint ? {
+      corners: hint.corners.map(p => ({x: p.x*img.naturalWidth, y: p.y*img.naturalHeight})),
+      score: hint.score,
+    } : null);
     els.cropImg.src = url;
     showScreen("screen-crop");
     // wait a frame for layout
@@ -1468,6 +1534,231 @@
   }
 
   let detected = null; // {corners (natural px), score} for the photo on the crop screen
+
+  /* ============================================================
+     LIVE CAMERA WITH AUTO-CAPTURE
+     "Take Photo" opens a viewfinder inside Foldout. About seven times a
+     second a small copy of the picture is run through the page detector
+     and the page is outlined on screen. With Auto on, once a page has
+     been found with confidence and has held still for HOLD_MS (the ring
+     on the shutter fills up meanwhile), the photo is taken by itself and
+     goes straight into the usual crop and straighten. The shutter button
+     always works by hand. Where the camera cannot be opened here (no
+     permission, an old browser), the phone's own camera app is used as
+     before.
+  ============================================================ */
+  const CAPTURE_SCORE = 0.95;   // as sure as auto-crop needs to be
+  const HOLD_MS = 900;          // how long the page must stay put
+  const STILL = 0.02;           // corners may move up to 2% of the picture's diagonal and still count as still
+  const FRAME_MS = 140;         // time between detections
+  const AUTO_CAPTURE_KEY = "foldout.autoCapture";
+
+  const cam = {
+    stream: null, timer: 0, running: false, busy: false,
+    last: null,          // corners of the previous detection (detection-canvas px)
+    lastScore: 0,        // and how sure that detection was
+    steadySince: 0,      // when the page last started holding still
+    shown: null,         // corners currently drawn (smoothed), as fractions of the video
+    canvas: document.createElement("canvas"),
+  };
+  cam.ctx = cam.canvas.getContext("2d", { willReadFrequently: true });
+
+  function autoCaptureOn(){
+    try{ return localStorage.getItem(AUTO_CAPTURE_KEY) !== "off"; }catch(_){ return true; }
+  }
+  function setAutoCapture(on){
+    try{ localStorage.setItem(AUTO_CAPTURE_KEY, on ? "on" : "off"); }catch(_){}
+    els.camAuto.setAttribute("aria-pressed", on ? "true" : "false");
+    els.camAuto.textContent = on ? "Auto" : "Auto off";
+    cam.steadySince = 0;
+    setRing(0);
+  }
+  els.camAuto.addEventListener("click", () => setAutoCapture(!autoCaptureOn()));
+
+  // For tests only: ?fakecam=<picture in this folder> plays that picture,
+  // sliding in from the side and then shaking slightly, as a stand-in camera.
+  function fakeCameraStream(src){
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const c = document.createElement("canvas");
+        c.width = img.naturalWidth; c.height = img.naturalHeight;
+        const g = c.getContext("2d");
+        const start = performance.now();
+        (function draw(){
+          const t = (performance.now() - start) / 1000;
+          const slide = Math.max(0, 1 - t/1.2);              // in from the right during the first 1.2 s
+          g.fillStyle = "#2a2522"; g.fillRect(0, 0, c.width, c.height);
+          g.drawImage(img, slide*c.width*0.9 + Math.sin(t*9)*2, Math.cos(t*7)*2);
+          if(cam.running || t < 2) requestAnimationFrame(draw);
+        })();
+        resolve(c.captureStream(30));
+      };
+      img.onerror = reject;
+      img.src = src;
+    });
+  }
+
+  function openCameraStream(){
+    const fake = new URLSearchParams(location.search).get("fakecam");
+    if(fake && /^[\w\-.\/]+$/.test(fake) && !fake.includes("..")) return fakeCameraStream(fake);
+    return navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { facingMode: { ideal: "environment" }, width: { ideal: 3840 }, height: { ideal: 2160 } },
+    });
+  }
+
+  async function openCamera(){
+    if(!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) && !location.search.includes("fakecam")) return false;
+    try{
+      els.camStatus.textContent = "Starting camera…";
+      cam.stream = await openCameraStream();
+      els.camVideo.srcObject = cam.stream;
+      await els.camVideo.play();
+    }catch(err){
+      stopCameraStream();
+      return false;
+    }
+    showScreen("screen-camera");
+    setAutoCapture(autoCaptureOn());
+    cam.last = null; cam.shown = null; cam.steadySince = 0;
+    drawQuad(null);
+    cam.running = true;
+    cam.timer = setTimeout(camTick, FRAME_MS);
+    return true;
+  }
+
+  function stopCameraStream(){
+    cam.running = false;
+    clearTimeout(cam.timer);
+    if(cam.stream) cam.stream.getTracks().forEach(t => t.stop());
+    cam.stream = null;
+    els.camVideo.srcObject = null;
+  }
+
+  function closeCamera(){
+    stopCameraStream();
+    showScreen("screen-home");
+  }
+  els.camClose.addEventListener("click", closeCamera);
+  // Leaving the app or tab switches the camera off.
+  document.addEventListener("visibilitychange", () => {
+    if(document.hidden && cam.running) closeCamera();
+  });
+
+  function setRing(progress){
+    els.camRing.style.strokeDashoffset = String(226.2 * (1 - Math.max(0, Math.min(1, progress))));
+  }
+
+  // Draws the outline. Corners come as fractions of the video picture and are
+  // mapped onto the screen, where the video fills the stage (object-fit: cover).
+  function drawQuad(corners, steady){
+    if(!corners){ els.camQuad.setAttribute("points", ""); return; }
+    const v = els.camVideo, box = els.camStage.getBoundingClientRect();
+    const vw = v.videoWidth || 1, vh = v.videoHeight || 1;
+    const s = Math.max(box.width/vw, box.height/vh);
+    const ox = (box.width - vw*s)/2, oy = (box.height - vh*s)/2;
+    els.camSvg.setAttribute("viewBox", `0 0 ${box.width} ${box.height}`);
+    els.camQuad.setAttribute("points", corners.map(p => `${ox + p.x*vw*s},${oy + p.y*vh*s}`).join(" "));
+    els.camQuad.classList.toggle("steady", !!steady);
+  }
+
+  function camTick(){
+    if(!cam.running) return;
+    const v = els.camVideo;
+    if(v.videoWidth && !cam.busy){
+      const scale = DETECT_SIZE / Math.max(v.videoWidth, v.videoHeight);
+      const w = Math.round(v.videoWidth*scale), h = Math.round(v.videoHeight*scale);
+      if(cam.canvas.width !== w || cam.canvas.height !== h){ cam.canvas.width = w; cam.canvas.height = h; }
+      cam.ctx.drawImage(v, 0, 0, w, h);
+      let found = null;
+      try{ found = detectDocument(cam.ctx.getImageData(0, 0, w, h).data, w, h); }catch(_){}
+      handleDetection(found, w, h);
+    }
+    cam.timer = setTimeout(camTick, FRAME_MS);
+  }
+
+  function handleDetection(found, w, h){
+    const now = performance.now();
+    const sure = found && found.score >= CAPTURE_SCORE;
+    if(!found){
+      cam.last = null; cam.lastScore = 0; cam.steadySince = 0; cam.shown = null;
+      drawQuad(null); setRing(0);
+      els.camStatus.textContent = "Looking for a page…";
+      return;
+    }
+    // Smooth the drawn outline a little so it does not jitter.
+    const frac = found.corners.map(p => ({x: p.x/w, y: p.y/h}));
+    cam.shown = cam.shown ? cam.shown.map((p, i) => ({x: p.x*0.5 + frac[i].x*0.5, y: p.y*0.5 + frac[i].y*0.5})) : frac;
+    // Still if no corner moved much since the last look.
+    const diag = Math.hypot(w, h);
+    const moved = cam.last ? Math.max(...found.corners.map((p, i) => Math.hypot(p.x - cam.last[i].x, p.y - cam.last[i].y))) / diag : 1;
+    cam.last = found.corners;
+    cam.lastScore = found.score;
+    if(!sure || moved > STILL){
+      cam.steadySince = 0; setRing(0);
+      drawQuad(cam.shown, false);
+      els.camStatus.textContent = sure ? "Hold still…" : "Move closer or flatten the page";
+      return;
+    }
+    if(!cam.steadySince) cam.steadySince = now;
+    drawQuad(cam.shown, true);
+    if(!autoCaptureOn()){
+      els.camStatus.textContent = "Page found · tap to capture";
+      return;
+    }
+    const progress = (now - cam.steadySince) / HOLD_MS;
+    setRing(progress);
+    els.camStatus.textContent = "Hold still…";
+    if(progress >= 1) capturePhoto(found.score);
+  }
+
+  async function capturePhoto(liveScore){
+    if(cam.busy) return;
+    cam.busy = true;
+    cam.running = false;
+    clearTimeout(cam.timer);
+    els.camStatus.textContent = "Capturing…";
+    try{
+      const v = els.camVideo;
+      const c = document.createElement("canvas");
+      c.width = v.videoWidth; c.height = v.videoHeight;
+      c.getContext("2d").drawImage(v, 0, 0);
+      const blob = await new Promise(res => c.toBlob(res, "image/jpeg", 0.95));
+      const hint = cam.shown && liveScore ? { corners: cam.shown, score: liveScore } : null;
+      stopCameraStream();
+      state.editingPageId = null;
+      loadIntoCropper(blob, hint);
+    }catch(err){
+      toast("Couldn't take the photo");
+      closeCamera();
+    }finally{
+      cam.busy = false;
+    }
+  }
+  // By hand: the live outline goes along with its real score, so an unsure
+  // outline still opens the corner screen instead of being cropped blindly.
+  els.camShutter.addEventListener("click", () => capturePhoto(cam.last ? cam.lastScore : 0));
+
+  // "Take Photo": the live camera here if possible, otherwise the phone's camera app.
+  // If the live camera cannot open (permission refused, no camera, old
+  // browser), the menu comes back and the next tap goes the usual way. It
+  // has to be a fresh tap: browsers ignore a file picker opened by script
+  // once the tap that started it is a few moments old.
+  let liveCameraFailed = false;
+  els.takePhotoItem.addEventListener("click", (e) => {
+    state.editingPageId = null;
+    els.cameraInput.value = "";
+    if(liveCameraFailed) return; // the label opens the camera input as normal
+    e.preventDefault();
+    els.scanMenu.hidden = true;
+    openCamera().then(ok => {
+      if(ok) return;
+      liveCameraFailed = true;
+      els.scanMenu.hidden = false;
+      toast("Live camera unavailable · tap Take Photo again");
+    });
+  });
 
   function initCropOverlay(){
     cropZoomCtrl.reset();
@@ -2527,6 +2818,7 @@
     if(els.fullscreenViewer.style.display === "flex"){ closeFullscreenViewer(); return true; }
     if(!els.scanMenu.hidden){ els.scanMenu.hidden = true; return true; }
     const active = document.querySelector(".screen.active");
+    if(active && active.id === "screen-camera"){ closeCamera(); return true; }
     const back = active && {
       "screen-crop": els.cropCancel,
       "screen-filter": els.filterBack,
