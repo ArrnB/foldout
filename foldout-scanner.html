@@ -4,6 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <title>Foldout — Scan documents, own the file</title>
+<meta name="theme-color" content="#14161A">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <style>
   :root{
     --bg: #14161A;
@@ -1304,6 +1308,10 @@
     return outCanvas;
   }
 
+  // The beam is a one-off sweep. Without this it stayed switched on after the
+  // first page, showing as a blue band at the top of the next crop screen.
+  els.scanBeam.addEventListener("animationend", () => els.scanBeam.classList.remove("active"));
+
   els.cropConfirm.addEventListener("click", ()=>{
     els.scanBeam.classList.remove("active");
     void els.scanBeam.offsetWidth;
@@ -1863,7 +1871,27 @@
     return raw.replace(/[^a-z0-9\-_ ]/gi,"").trim().replace(/\s+/g,"-") || "scan";
   }
 
-  function triggerDownload(blobUrl, filename){
+  // Inside the Android app there is no browser download manager, so files
+  // are handed to the app (window.FoldoutAndroid), which saves them to
+  // Downloads. Everywhere else, the usual <a download> click.
+  const androidApp = window.FoldoutAndroid || null;
+
+  async function triggerDownload(blobUrl, filename){
+    if(androidApp){
+      try{
+        const blob = await (await fetch(blobUrl)).blob();
+        const dataUrl = await new Promise((res, rej) => {
+          const reader = new FileReader();
+          reader.onload = () => res(reader.result);
+          reader.onerror = () => rej(reader.error);
+          reader.readAsDataURL(blob);
+        });
+        androidApp.saveFile(dataUrl, filename, blob.type || "application/octet-stream");
+      }catch(err){
+        toast("Couldn't save " + filename);
+      }
+      return;
+    }
     els.downloadLink.href = blobUrl;
     els.downloadLink.download = filename;
     document.body.appendChild(els.downloadLink);
@@ -2024,6 +2052,41 @@
     }, 400);
   }
   els.docTitle.addEventListener("input", scheduleSave);
+
+  /* ============================================================
+     BACK BUTTON (Android app)
+     The app calls this when the phone's Back button is pressed. It steps
+     back one screen, the way the on-screen back buttons do, and returns
+     false only on the home screen, where the app then closes.
+  ============================================================ */
+  window.foldoutBack = function(){
+    if(els.fullscreenViewer.style.display === "flex"){ closeFullscreenViewer(); return true; }
+    if(!els.scanMenu.hidden){ els.scanMenu.hidden = true; return true; }
+    const active = document.querySelector(".screen.active");
+    const back = active && {
+      "screen-crop": els.cropCancel,
+      "screen-filter": els.filterBack,
+      "screen-export": els.exportBack,
+    }[active.id];
+    if(back){ back.click(); return true; }
+    return false;
+  };
+
+  // Android can stop the app while the camera app is open (it needs the
+  // memory). The page is then reloaded, the file input's request is gone,
+  // and the app hands the new photo over here instead, by URL.
+  window.foldoutReceivePhoto = function(url){
+    fetch(url)
+      .then(r => { if(!r.ok) throw new Error(r.status); return r.blob(); })
+      .then(blob => { state.editingPageId = null; loadIntoCropper(blob); })
+      .catch(() => toast("Couldn't open the photo"));
+  };
+
+  // Offline support for the web version. The Android app ships the page
+  // inside itself, so it does not need (or register) the service worker.
+  if(!androidApp && "serviceWorker" in navigator && location.protocol === "https:"){
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  }
 
   /* init */
   renderHome();

@@ -2,7 +2,32 @@
 
 A browser-based document scanner: capture a page, straighten it, apply a filter, optionally watermark it, and export a PDF or image set. Everything — camera capture, perspective correction, filtering, watermarking, PDF generation — runs **entirely on-device**. No upload, no account, no network calls.
 
-Single self-contained HTML file (`foldout-scanner.html`). Open it in a mobile browser (Chrome/Safari) — no install step.
+The whole scanner is one self-contained HTML file (`foldout-scanner.html`). There are three ways to use it:
+
+- **In the browser:** open **https://arrnb.github.io/foldout/** on a phone. Nothing to install.
+- **As an installed web app:** in Chrome, open the menu and choose *Install app* (or *Add to Home screen* on iPhone). It then opens full-screen and works offline.
+- **As an Android app:** the `android/` folder wraps the same page in a small native app (about 300 KB, Android 10+). See [Android app](#android-app) below.
+
+## Android app
+
+`android/` is a minimal Kotlin app that shows `foldout-scanner.html` in a WebView. The HTML is copied in from the repository root at build time, so the website and the app are always the same scanner. The app adds only what a web page cannot do by itself:
+
+- **Take Photo** opens the phone's camera app; **Choose from Library** opens the system photo picker
+- **Save as PDF / images** writes to *Downloads/Foldout* (through MediaStore, so no storage permission)
+- The **Back** button steps back through the scanner's screens and closes the app from the home screen
+- If Android stops the app while the camera is open (common on low memory), the photo is still delivered when it comes back
+
+It asks for **no permissions at all**, not even internet: the page is bundled inside the app.
+
+Build it with Android Studio (open the `android/` folder), or from the command line:
+
+```
+cd android
+./gradlew assembleDebug      # app/build/outputs/apk/debug/app-debug.apk
+./gradlew assembleRelease    # shrunk with R8, ~300 KB (sign it before installing)
+```
+
+GitHub Actions builds the app on every push and attaches the debug APK to each run.
 
 ## Features
 
