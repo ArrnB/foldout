@@ -650,7 +650,6 @@
 </div>
 
 <a class="download-link" id="download-link"></a>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script>
 (function(){
   "use strict";
@@ -716,17 +715,27 @@
   // on top, for display purposes only — page.dataUrl itself stays clean.
   // Cached per-page and invalidated whenever the source image or the
   // resolved watermark settings actually change.
+  const THUMB_MAX = 600;
+
+  function escapeHtml(text){
+    return String(text).replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
+  }
+
   async function getPageThumbSrc(page){
     const wm = resolveWatermarkForPage(page);
     if(!watermarkActive(wm)) return page.dataUrl;
     const cacheKey = page.dataUrl + "::" + JSON.stringify(wm);
     if(page._thumbCacheKey === cacheKey) return page._thumbCacheUrl;
     const img = await loadImg(page.dataUrl);
+    // A grid thumbnail is a couple of hundred pixels wide, so there is no
+    // need to draw and encode the whole page. The watermark is sized from
+    // the canvas width, so it looks the same at this scale.
+    const scale = Math.min(1, THUMB_MAX / img.naturalWidth);
     const canvas = document.createElement("canvas");
-    canvas.width = img.naturalWidth;
-    canvas.height = img.naturalHeight;
+    canvas.width = Math.round(img.naturalWidth * scale);
+    canvas.height = Math.round(img.naturalHeight * scale);
     const ctx = canvas.getContext("2d");
-    ctx.drawImage(img, 0, 0);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
     drawWatermarkOnCanvas(ctx, canvas.width, canvas.height, wm);
     const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
     page._thumbCacheKey = cacheKey;
@@ -735,6 +744,7 @@
   }
 
   function renderHome(){
+    scheduleSave(); // every change to the pages ends with a redraw of this screen
     const n = state.pages.length;
     els.pageCountLabel.textContent = n === 0
       ? "0 pages · processed on-device"
@@ -949,32 +959,58 @@
   els.cropZoomIn.addEventListener("click", () => cropZoomCtrl.zoomBy(0.4));
   els.cropZoomOut.addEventListener("click", () => cropZoomCtrl.zoomBy(-0.4));
 
-  els.cameraInput.addEventListener("change", (e)=>{
+  function onPhotoPicked(e){
     const file = e.target.files[0];
     if(!file) return;
-    const reader = new FileReader();
-    reader.onload = ev => loadIntoCropper(ev.target.result);
-    reader.readAsDataURL(file);
-  });
-  els.galleryInput.addEventListener("change", (e)=>{
-    const file = e.target.files[0];
-    if(!file) return;
-    const reader = new FileReader();
-    reader.onload = ev => loadIntoCropper(ev.target.result);
-    reader.readAsDataURL(file);
-  });
+    loadIntoCropper(file);
+  }
+  els.cameraInput.addEventListener("change", onPhotoPicked);
+  els.galleryInput.addEventListener("change", onPhotoPicked);
 
-  function loadIntoCropper(dataUrl){
-    capturedImg = new Image();
-    capturedImg.onload = () => {
-      els.cropImg.src = dataUrl;
-      showScreen("screen-crop");
-      // wait a frame for layout
-      requestAnimationFrame(()=>{
-        requestAnimationFrame(initCropOverlay);
-      });
+  // Phone cameras can produce 50–200 megapixel photos, which is more than
+  // a browser canvas will hold (the warp would fail or come out blank) and
+  // far more than a straightened page keeps (1500 px). Anything bigger
+  // than this is scaled down once, on load.
+  const SOURCE_MAX = 4096;
+  let capturedUrl = null;
+
+  function loadIntoCropper(file){
+    // An object URL lets the browser read the file directly, instead of
+    // copying a 10+ MB photo into a base64 string first.
+    if(capturedUrl) URL.revokeObjectURL(capturedUrl);
+    capturedUrl = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const longest = Math.max(img.naturalWidth, img.naturalHeight);
+      if(longest <= SOURCE_MAX){
+        showInCropper(img, capturedUrl);
+        return;
+      }
+      const scale = SOURCE_MAX / longest;
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.naturalWidth * scale);
+      canvas.height = Math.round(img.naturalHeight * scale);
+      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(blob => {
+        URL.revokeObjectURL(capturedUrl);
+        capturedUrl = URL.createObjectURL(blob);
+        const small = new Image();
+        small.onload = () => showInCropper(small, capturedUrl);
+        small.src = capturedUrl;
+      }, "image/jpeg", 0.95);
     };
-    capturedImg.src = dataUrl;
+    img.onerror = () => toast("Couldn't open that image");
+    img.src = capturedUrl;
+  }
+
+  function showInCropper(img, url){
+    capturedImg = img;
+    els.cropImg.src = url;
+    showScreen("screen-crop");
+    // wait a frame for layout
+    requestAnimationFrame(()=>{
+      requestAnimationFrame(initCropOverlay);
+    });
   }
 
   function initCropOverlay(){
@@ -1233,30 +1269,35 @@
     const outData = octx.createImageData(outW, outH);
 
     const [a,b,c,d,e,f,g,h] = M;
+    const src = srcData.data;
+    const out = outData.data;
+    const rowBytes = sw*4;
 
+    // Runs once per output pixel (up to 2.25 million), so it is kept flat:
+    // the four bilinear weights are worked out once and the channels are
+    // written out by hand rather than looped over. Pixels are sampled at
+    // their centres, which keeps the page from shifting by half a pixel.
+    let oi = 0;
     for(let y=0; y<outH; y++){
-      const v = y / outH;
-      for(let x=0; x<outW; x++){
-        const u = x / outW;
-        const wgt = g*u + h*v + 1;
-        const sx = (a*u + b*v + c) / wgt;
-        const sy = (d*u + e*v + f) / wgt;
-
-        let r=255,gg=255,bl=255,al=255;
+      const v = (y + 0.5) / outH;
+      const bx = b*v + c, ey = e*v + f, hv = h*v + 1;
+      for(let x=0; x<outW; x++, oi+=4){
+        const u = (x + 0.5) / outW;
+        const wgt = g*u + hv;
+        const sx = (a*u + bx) / wgt;
+        const sy = (d*u + ey) / wgt;
         if(sx>=0 && sx<sw-1 && sy>=0 && sy<sh-1){
-          // bilinear sample
-          const x0 = Math.floor(sx), y0 = Math.floor(sy);
+          const x0 = sx|0, y0 = sy|0;
           const fx = sx-x0, fy = sy-y0;
-          const idx00 = (y0*sw+x0)*4, idx10=(y0*sw+x0+1)*4, idx01=((y0+1)*sw+x0)*4, idx11=((y0+1)*sw+x0+1)*4;
-          for(let ch=0; ch<4; ch++){
-            const top = srcData.data[idx00+ch]*(1-fx) + srcData.data[idx10+ch]*fx;
-            const bot = srcData.data[idx01+ch]*(1-fx) + srcData.data[idx11+ch]*fx;
-            const val = top*(1-fy) + bot*fy;
-            if(ch===0) r=val; else if(ch===1) gg=val; else if(ch===2) bl=val; else al=val;
-          }
+          const w11 = fx*fy, w10 = fx - w11, w01 = fy - w11, w00 = 1 - fx - fy + w11;
+          const i00 = y0*rowBytes + x0*4, i10 = i00+4, i01 = i00+rowBytes, i11 = i01+4;
+          out[oi]   = src[i00]  *w00 + src[i10]  *w10 + src[i01]  *w01 + src[i11]  *w11;
+          out[oi+1] = src[i00+1]*w00 + src[i10+1]*w10 + src[i01+1]*w01 + src[i11+1]*w11;
+          out[oi+2] = src[i00+2]*w00 + src[i10+2]*w10 + src[i01+2]*w01 + src[i11+2]*w11;
+          out[oi+3] = src[i00+3]*w00 + src[i10+3]*w10 + src[i01+3]*w01 + src[i11+3]*w11;
+        } else {
+          out[oi] = out[oi+1] = out[oi+2] = out[oi+3] = 255;
         }
-        const oi = (y*outW+x)*4;
-        outData.data[oi]=r; outData.data[oi+1]=gg; outData.data[oi+2]=bl; outData.data[oi+3]=al;
       }
     }
     octx.putImageData(outData,0,0);
@@ -1429,7 +1470,7 @@
       const custom = p.watermarkOverride;
       let label = `Page ${idx+1} — `;
       if(isCurrent) label += "currently editing";
-      else if(custom && custom.text) label += `custom "${custom.text.slice(0,16)}"`;
+      else if(custom && custom.text) label += `custom "${escapeHtml(custom.text.slice(0,16))}"`;
       else label += "using global";
       options.push(`<option value="${p.id}" ${isCurrent ? "disabled" : ""}>${label}</option>`);
     });
@@ -1443,7 +1484,7 @@
   // Saves whatever page is currently open (new or existing) exactly like
   // tapping "Continue" would, so nothing is lost when jumping elsewhere.
   function commitCurrentPageEdits(){
-    const finalCanvas = filterThumbCache[selectedFilter];
+    const finalCanvas = fullFilterCanvas(selectedFilter);
     const finalDataUrl = finalCanvas.toDataURL("image/jpeg", 0.9);
     let watermarkOverride = null;
     if(wmApplyToAll){
@@ -1618,8 +1659,19 @@
 
   // Composites the current filter's clean canvas + watermark (if enabled)
   // into the live preview — used any time filter/watermark settings change.
+  // Sliders and drags fire many times per frame, and each redraw encodes
+  // the whole page, so redraws are bundled into at most one per frame.
+  let previewFrame = 0;
   function renderCombinedPreview(){
-    const baseCanvas = filterThumbCache[selectedFilter];
+    if(previewFrame) return;
+    previewFrame = requestAnimationFrame(() => {
+      previewFrame = 0;
+      drawCombinedPreview();
+    });
+  }
+
+  function drawCombinedPreview(){
+    const baseCanvas = fullFilterCanvas(selectedFilter);
     if(!baseCanvas) return;
     let outCanvas = baseCanvas;
     if(watermarkActive(wmDraft)){
@@ -1681,8 +1733,6 @@
       if(filterId === "gray"){
         d[i]=d[i+1]=d[i+2]=gray;
       } else if(filterId === "bw"){
-        const v = gray > 150 ? 255 : (gray < 90 ? 0 : gray);
-        const bw = v > 128 ? 255 : 0;
         d[i]=d[i+1]=d[i+2]= gray > 140 ? 255 : 0;
       } else if(filterId === "enhance"){
         const contrast = 1.28, bright = 18;
@@ -1713,12 +1763,28 @@
     img.src = sourceDataUrl;
   }
 
+  // The full-size filtered page, made the first time a filter is actually
+  // looked at and kept while this screen is open.
+  function fullFilterCanvas(filterId){
+    if(!filterThumbCache[filterId] && filterThumbCache._img){
+      filterThumbCache[filterId] = applyFilter(filterThumbCache._img, filterId);
+    }
+    return filterThumbCache[filterId];
+  }
+
+  const RAIL_THUMB = 160;
+
   function renderFilterRail(img){
     els.filterRail.innerHTML = "";
+    // The chips are 56 px, so they are made from a small copy of the page.
+    // Filtering and encoding all four at full size made this screen slow to open.
+    const scale = Math.min(1, RAIL_THUMB / Math.max(img.naturalWidth, img.naturalHeight));
+    const small = document.createElement("canvas");
+    small.width = Math.max(1, Math.round(img.naturalWidth * scale));
+    small.height = Math.max(1, Math.round(img.naturalHeight * scale));
+    small.getContext("2d").drawImage(img, 0, 0, small.width, small.height);
     FILTERS.forEach(f=>{
-      const canvas = applyFilter(img, f.id);
-      const thumbUrl = canvas.toDataURL("image/jpeg", 0.7);
-      filterThumbCache[f.id] = canvas;
+      const thumbUrl = applyFilter(small, f.id).toDataURL("image/jpeg", 0.7);
       const chip = document.createElement("div");
       chip.className = "filter-chip" + (f.id===selectedFilter ? " selected":"");
       chip.dataset.id = f.id;
@@ -1805,60 +1871,172 @@
   }
 
   function loadImg(src){
-    return new Promise(res=>{
+    return new Promise((res, rej)=>{
       const i = new Image();
       i.onload = ()=>res(i);
+      i.onerror = rej;
       i.src = src;
     });
   }
 
-  // Returns an <img> ready for export: the page's clean image, or — if a
-  // watermark is on — a fresh canvas with the watermark drawn on top,
-  // rendered at the page's full resolution (not the small preview size).
-  async function getExportImage(page){
+  // Returns the page ready for export as a JPEG data URL plus its size: the
+  // page's own JPEG untouched when there is no watermark (no second round
+  // of JPEG compression), or the page with its watermark drawn on at full
+  // resolution.
+  async function getExportJpeg(page){
     const img = await loadImg(page.dataUrl);
+    const w = img.naturalWidth, h = img.naturalHeight;
     const wm = resolveWatermarkForPage(page);
-    if(!watermarkActive(wm)) return img;
+    if(!watermarkActive(wm)) return { dataUrl: page.dataUrl, w, h };
     const canvas = document.createElement("canvas");
-    canvas.width = img.naturalWidth;
-    canvas.height = img.naturalHeight;
+    canvas.width = w;
+    canvas.height = h;
     const ctx = canvas.getContext("2d");
     ctx.drawImage(img, 0, 0);
-    drawWatermarkOnCanvas(ctx, canvas.width, canvas.height, wm);
-    return loadImg(canvas.toDataURL("image/jpeg", 0.92));
+    drawWatermarkOnCanvas(ctx, w, h, wm);
+    return { dataUrl: canvas.toDataURL("image/jpeg", 0.92), w, h };
+  }
+
+  function dataUrlToBytes(dataUrl){
+    const bin = atob(dataUrl.slice(dataUrl.indexOf(",")+1));
+    const bytes = new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  }
+
+  /* ---------- A small PDF writer ----------
+     Every page is already a JPEG, and PDF can hold JPEG data as it is
+     (the DCTDecode filter), so a PDF here is just a few lines of text
+     around each page's bytes. No library, nothing downloaded, and the
+     pages are not compressed a second time. Pages are A4 portrait with
+     each scan centred inside an 8 mm margin. */
+  function buildPdf(pages){ // pages: [{bytes, w, h}]
+    const enc = new TextEncoder();
+    const parts = [];
+    const offsets = [];
+    let pos = 0;
+    const push = (x) => { const b = typeof x === "string" ? enc.encode(x) : x; parts.push(b); pos += b.length; };
+    const obj = (id, writeBody) => { offsets[id] = pos; push(`${id} 0 obj\n`); writeBody(); push("\nendobj\n"); };
+
+    const PW = 595.28, PH = 841.89;   // A4 in points
+    const M = 22.68;                  // 8 mm
+    const pageIds = pages.map((_, i) => 3 + i*3);
+
+    push("%PDF-1.4\n%âãÏÓ\n");
+    obj(1, () => push("<< /Type /Catalog /Pages 2 0 R >>"));
+    obj(2, () => push(`<< /Type /Pages /Kids [${pageIds.map(id => id+" 0 R").join(" ")}] /Count ${pages.length} >>`));
+    pages.forEach((pg, i) => {
+      const pageId = pageIds[i], contentId = pageId+1, imageId = pageId+2;
+      let w = PW - 2*M, h = w * pg.h / pg.w;
+      if(h > PH - 2*M){ h = PH - 2*M; w = h * pg.w / pg.h; }
+      const x = (PW - w)/2, y = (PH - h)/2;
+      const content = `q ${w.toFixed(2)} 0 0 ${h.toFixed(2)} ${x.toFixed(2)} ${y.toFixed(2)} cm /Im0 Do Q`;
+      obj(pageId, () => push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PW} ${PH}] /Resources << /XObject << /Im0 ${imageId} 0 R >> >> /Contents ${contentId} 0 R >>`));
+      obj(contentId, () => { push(`<< /Length ${content.length} >>\nstream\n`); push(content); push("\nendstream"); });
+      obj(imageId, () => {
+        push(`<< /Type /XObject /Subtype /Image /Width ${pg.w} /Height ${pg.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${pg.bytes.length} >>\nstream\n`);
+        push(pg.bytes);
+        push("\nendstream");
+      });
+    });
+
+    const count = 3 + pages.length*3;
+    const xrefAt = pos;
+    let xref = `xref\n0 ${count}\n0000000000 65535 f \n`;
+    for(let id=1; id<count; id++) xref += String(offsets[id]).padStart(10, "0") + " 00000 n \n";
+    push(xref);
+    push(`trailer\n<< /Size ${count} /Root 1 0 R >>\nstartxref\n${xrefAt}\n%%EOF\n`);
+    return new Blob(parts, {type: "application/pdf"});
   }
 
   els.exportPdfOpt.addEventListener("click", async ()=>{
-    if(!window.jspdf){ toast("PDF library still loading — try again"); return; }
-    const { jsPDF } = window.jspdf;
-    let pdf = null;
-    for(let i=0;i<state.pages.length;i++){
-      const img = await getExportImage(state.pages[i]);
-      const ratio = img.naturalWidth / img.naturalHeight;
-      const pageW = 210, pageH = 297; // A4 mm portrait
-      let w = pageW - 16, h = w/ratio;
-      if(h > pageH-16){ h = pageH-16; w = h*ratio; }
-      if(!pdf) pdf = new jsPDF({unit:"mm", format:"a4"});
-      else pdf.addPage();
-      const x = (pageW-w)/2, y = (pageH-h)/2;
-      pdf.addImage(img, "JPEG", x, y, w, h, undefined, "FAST");
+    toast("Making PDF…");
+    const pages = [];
+    for(const page of state.pages){
+      const jpeg = await getExportJpeg(page);
+      pages.push({ bytes: dataUrlToBytes(jpeg.dataUrl), w: jpeg.w, h: jpeg.h });
     }
-    const blobUrl = pdf.output("bloburl");
+    const blobUrl = URL.createObjectURL(buildPdf(pages));
     triggerDownload(blobUrl, safeName()+".pdf");
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
     toast("PDF ready");
   });
 
   els.exportJpgOpt.addEventListener("click", async ()=>{
     toast(`Saving ${state.pages.length} image${state.pages.length>1?"s":""}…`);
     for(let i=0;i<state.pages.length;i++){
-      const img = await getExportImage(state.pages[i]);
-      triggerDownload(img.src, `${safeName()}-${String(i+1).padStart(2,"0")}.jpg`);
+      const jpeg = await getExportJpeg(state.pages[i]);
+      triggerDownload(jpeg.dataUrl, `${safeName()}-${String(i+1).padStart(2,"0")}.jpg`);
       await new Promise(r => setTimeout(r, 250));
     }
   });
 
+  /* ============================================================
+     KEEPING SCANS BETWEEN VISITS
+     Pages, the watermark and the title are saved in this browser's
+     IndexedDB (on this device only) a moment after every change, and
+     read back when the page opens, so a refresh or a closed tab no
+     longer loses a scan. "New" clears them. Where IndexedDB is not
+     available (some private windows) the app simply works as before.
+  ============================================================ */
+  const store = (() => {
+    let dbPromise = null;
+    function db(){
+      if(!dbPromise){
+        dbPromise = new Promise((res, rej) => {
+          if(!window.indexedDB){ rej(new Error("no IndexedDB")); return; }
+          const req = indexedDB.open("foldout", 1);
+          req.onupgradeneeded = () => req.result.createObjectStore("doc");
+          req.onsuccess = () => res(req.result);
+          req.onerror = () => rej(req.error);
+        });
+      }
+      return dbPromise;
+    }
+    async function run(mode, fn){
+      const d = await db();
+      return new Promise((res, rej) => {
+        const tx = d.transaction("doc", mode);
+        const req = fn(tx.objectStore("doc"));
+        tx.oncomplete = () => res(req && req.result);
+        tx.onerror = () => rej(tx.error);
+      });
+    }
+    return {
+      load: () => run("readonly", s => s.get("current")),
+      save: (value) => run("readwrite", s => s.put(value, "current")),
+    };
+  })();
+
+  let saveTimer = null;
+  let restoring = true; // don't overwrite saved pages with the empty start state
+  function scheduleSave(){
+    if(restoring) return;
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      store.save({
+        title: els.docTitle.value,
+        watermark: state.watermark,
+        idCounter,
+        // The cached watermarked thumbnails are rebuilt on demand, so they are not stored.
+        pages: state.pages.map(({_thumbCacheKey, _thumbCacheUrl, ...page}) => page),
+      }).catch(() => {});
+    }, 400);
+  }
+  els.docTitle.addEventListener("input", scheduleSave);
+
   /* init */
   renderHome();
+  store.load().then(saved => {
+    if(saved && Array.isArray(saved.pages) && saved.pages.length){
+      state.pages = saved.pages;
+      if(saved.watermark) state.watermark = saved.watermark;
+      idCounter = Math.max(saved.idCounter || 1, ...saved.pages.map(p => p.id + 1));
+      if(saved.title) els.docTitle.value = saved.title;
+      renderHome();
+      toast(`Restored ${saved.pages.length} page${saved.pages.length>1?"s":""}`);
+    }
+  }).catch(() => {}).finally(() => { restoring = false; });
 })();
 </script>
 </body>

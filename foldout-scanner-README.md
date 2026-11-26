@@ -38,21 +38,33 @@ Single self-contained HTML file (`foldout-scanner.html`). Open it in a mobile br
 - **PDF**: all pages combined into one file, sized to A4
 - **Images**: each page saved as an individual JPG
 - Both honor each page's resolved watermark at full export resolution (not just preview resolution)
+- Pages without a watermark go into the PDF exactly as stored — no second round of JPEG compression
+
+### Keeps your scan
+- Pages, watermark settings and the title are saved in the browser's IndexedDB (on this device only) as you work, so a refresh, a closed tab, or the phone killing the browser in the background no longer loses a scan
+- **New** clears it
 
 ## Privacy model
 
-Everything — image capture, the perspective warp, filters, watermark compositing, and PDF assembly — happens in the browser using Canvas/JS and a bundled copy of jsPDF. No image data is ever sent anywhere.
+Everything — image capture, the perspective warp, filters, watermark compositing, and PDF assembly — happens in the browser using Canvas and plain JavaScript. The PDF is written by a small built-in writer (a JPEG can go into a PDF as-is), so the page loads **no external scripts and makes no network requests at all**; it works offline once opened. Saved scans stay in this browser's storage on this device.
+
+## Performance notes
+
+- Very large camera photos (50–200 MP) are scaled to 4096 px on the long side when loaded, which keeps them inside browser canvas limits; the straightened page is capped at 1500 px anyway
+- Photos are read through object URLs rather than base64 strings
+- The filter screen builds its four preview chips from a 160 px copy and only filters the full page for the filter you pick
+- Watermark sliders and drags redraw at most once per frame
+- Home-screen thumbnails are drawn at 600 px instead of full page size
+- The perspective warp's per-pixel loop is unrolled and samples pixel centres
 
 ## Known limitations
 
 - No automatic edge detection — crop corners start at a fixed inset and must be dragged into place by hand
-- Single-session state: refreshing or closing the tab clears all pages (no persistence layer yet)
 - JPG export downloads one file at a time rather than as a single zip
 - Tested primarily on mobile Chrome/Safari; desktop browsers will work but the UI is optimized for a phone-width screen
 
 ## Possible next steps
 
-- IndexedDB persistence so scans survive a refresh
 - Automatic edge/border detection (e.g. via a lightweight on-device CV model)
 - OCR / searchable-text layer in the exported PDF
 - Zip bundling for multi-image export
