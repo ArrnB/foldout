@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="foldout_bg">#14161A</color>
+    <color name="foldout_accent">#3D5AFE</color>
+
+    <!-- Dark from the first frame, so there is no white flash before the page draws. -->
+    <style name="Theme.Foldout" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/foldout_bg</item>
+        <item name="android:colorAccent">@color/foldout_accent</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

@@ -2,7 +2,32 @@
 
 A browser-based document scanner: capture a page, straighten it, apply a filter, optionally watermark it, and export a PDF or image set. Everything — camera capture, perspective correction, filtering, watermarking, PDF generation — runs **entirely on-device**. No upload, no account, no network calls.
 
-Single self-contained HTML file (`foldout-scanner.html`). Open it in a mobile browser (Chrome/Safari) — no install step.
+The whole scanner is one self-contained HTML file (`foldout-scanner.html`). There are three ways to use it:
+
+- **In the browser:** open **https://arrnb.github.io/foldout/** on a phone. Nothing to install.
+- **As an installed web app:** in Chrome, open the menu and choose *Install app* (or *Add to Home screen* on iPhone). It then opens full-screen and works offline.
+- **As an Android app:** the `android/` folder wraps the same page in a small native app (about 300 KB, Android 10+). See [Android app](#android-app) below.
+
+## Android app
+
+`android/` is a minimal Kotlin app that shows `foldout-scanner.html` in a WebView. The HTML is copied in from the repository root at build time, so the website and the app are always the same scanner. The app adds only what a web page cannot do by itself:
+
+- **Take Photo** opens the phone's camera app; **Choose from Library** opens the system photo picker
+- **Save as PDF / images** writes to *Downloads/Foldout* (through MediaStore, so no storage permission)
+- The **Back** button steps back through the scanner's screens and closes the app from the home screen
+- If Android stops the app while the camera is open (common on low memory), the photo is still delivered when it comes back
+
+It asks for **no permissions at all**, not even internet: the page is bundled inside the app.
+
+Build it with Android Studio (open the `android/` folder), or from the command line:
+
+```
+cd android
+./gradlew assembleDebug      # app/build/outputs/apk/debug/app-debug.apk
+./gradlew assembleRelease    # shrunk with R8, ~300 KB (sign it before installing)
+```
+
+GitHub Actions builds the app on every push and attaches the debug APK to each run.
 
 ## Features
 
@@ -38,21 +63,33 @@ Single self-contained HTML file (`foldout-scanner.html`). Open it in a mobile br
 - **PDF**: all pages combined into one file, sized to A4
 - **Images**: each page saved as an individual JPG
 - Both honor each page's resolved watermark at full export resolution (not just preview resolution)
+- Pages without a watermark go into the PDF exactly as stored — no second round of JPEG compression
+
+### Keeps your scan
+- Pages, watermark settings and the title are saved in the browser's IndexedDB (on this device only) as you work, so a refresh, a closed tab, or the phone killing the browser in the background no longer loses a scan
+- **New** clears it
 
 ## Privacy model
 
-Everything — image capture, the perspective warp, filters, watermark compositing, and PDF assembly — happens in the browser using Canvas/JS and a bundled copy of jsPDF. No image data is ever sent anywhere.
+Everything — image capture, the perspective warp, filters, watermark compositing, and PDF assembly — happens in the browser using Canvas and plain JavaScript. The PDF is written by a small built-in writer (a JPEG can go into a PDF as-is), so the page loads **no external scripts and makes no network requests at all**; it works offline once opened. Saved scans stay in this browser's storage on this device.
+
+## Performance notes
+
+- Very large camera photos (50–200 MP) are scaled to 4096 px on the long side when loaded, which keeps them inside browser canvas limits; the straightened page is capped at 1500 px anyway
+- Photos are read through object URLs rather than base64 strings
+- The filter screen builds its four preview chips from a 160 px copy and only filters the full page for the filter you pick
+- Watermark sliders and drags redraw at most once per frame
+- Home-screen thumbnails are drawn at 600 px instead of full page size
+- The perspective warp's per-pixel loop is unrolled and samples pixel centres
 
 ## Known limitations
 
 - No automatic edge detection — crop corners start at a fixed inset and must be dragged into place by hand
-- Single-session state: refreshing or closing the tab clears all pages (no persistence layer yet)
 - JPG export downloads one file at a time rather than as a single zip
 - Tested primarily on mobile Chrome/Safari; desktop browsers will work but the UI is optimized for a phone-width screen
 
 ## Possible next steps
 
-- IndexedDB persistence so scans survive a refresh
 - Automatic edge/border detection (e.g. via a lightweight on-device CV model)
 - OCR / searchable-text layer in the exported PDF
 - Zip bundling for multi-image export
