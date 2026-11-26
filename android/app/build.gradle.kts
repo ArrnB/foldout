@@ -1,7 +1,15 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
+
+// Release signing for the Play Store. The upload key and its passwords live in
+// android/keystore.properties, which is never committed (see .gitignore and
+// PLAY_STORE.md). Without that file, release builds are simply left unsigned.
+val keystoreFile = rootProject.file("keystore.properties")
+val keystore = Properties().apply { if (keystoreFile.exists()) keystoreFile.inputStream().use { load(it) } }
 
 // The app shows the very same page as the website: foldout-scanner.html and
 // its icons are copied in from the repository root at build time, so there
@@ -15,21 +23,34 @@ val copyWeb by tasks.registering(Copy::class) {
 
 android {
     namespace = "app.foldout"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "app.foldout"
         // Android 10+: saving to Downloads then needs no storage permission.
         minSdk = 29
-        targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        targetSdk = 36
+        // Play needs versionCode to go up with every upload.
+        versionCode = 2
+        versionName = "1.1.0"
     }
 
     sourceSets["main"].assets.srcDir(webDir)
 
+    signingConfigs {
+        if (keystoreFile.exists()) {
+            create("upload") {
+                storeFile = rootProject.file(keystore.getProperty("storeFile"))
+                storePassword = keystore.getProperty("storePassword")
+                keyAlias = keystore.getProperty("keyAlias")
+                keyPassword = keystore.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            if (keystoreFile.exists()) signingConfig = signingConfigs.getByName("upload")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
