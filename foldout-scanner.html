@@ -1,0 +1,1865 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>Foldout — Scan documents, own the file</title>
+<style>
+  :root{
+    --bg: #14161A;
+    --surface: #1D2025;
+    --surface-2: #262A31;
+    --line: #34383F;
+    --paper: #F6F2E9;
+    --paper-shadow: #C9C2B2;
+    --ink: #ECE9E2;
+    --muted: #8B909B;
+    --accent: #3D5AFE;
+    --accent-ink: #EAF0FF;
+    --shutter: #FF5A36;
+    --good: #34D399;
+    --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color: transparent;}
+  html,body{height:100%;}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:var(--sans);
+    overscroll-behavior:none;
+    -webkit-user-select:none; user-select:none;
+  }
+  #app{
+    max-width:480px; margin:0 auto; height:100dvh;
+    display:flex; flex-direction:column; position:relative;
+    background:var(--bg);
+    border-left:1px solid var(--line); border-right:1px solid var(--line);
+  }
+  .screen{ display:none; flex-direction:column; height:100%; min-height:0; }
+  .screen.active{ display:flex; }
+
+  /* ---- Top bar ---- */
+  .topbar{
+    display:flex; align-items:center; justify-content:space-between;
+    padding: max(14px, env(safe-area-inset-top)) 16px 12px;
+    border-bottom:1px solid var(--line);
+    flex-shrink:0;
+  }
+  .brand{ display:flex; align-items:center; gap:9px; }
+  .brand-mark{
+    width:22px;height:22px; border-radius:5px;
+    background:linear-gradient(155deg, var(--accent), #7A93FF);
+    position:relative; flex-shrink:0;
+  }
+  .brand-mark::after{
+    content:""; position:absolute; left:4px; right:4px; top:47%; height:1.5px;
+    background:rgba(255,255,255,.85);
+  }
+  .brand-name{ font-weight:650; font-size:15px; letter-spacing:-0.01em; }
+  .topbar-action{
+    background:none; border:none; color:var(--muted); font-family:var(--mono);
+    font-size:12px; letter-spacing:.02em; padding:6px 4px; cursor:pointer;
+  }
+  .topbar-action.on{ color:var(--ink); }
+  .icon-btn{
+    background:var(--surface); border:1px solid var(--line); color:var(--ink);
+    width:34px; height:34px; border-radius:9px; display:flex; align-items:center; justify-content:center;
+    cursor:pointer;
+  }
+
+  /* ---- Home / library ---- */
+  .home-scroll{ flex:1; min-height:0; overflow-y:auto; padding:18px 16px 100px; }
+  .doc-title-row{ margin-bottom:4px; }
+  .doc-title-input{
+    background:none; border:none; color:var(--ink); font-size:24px; font-weight:650;
+    letter-spacing:-0.02em; width:100%; padding:0; font-family:var(--sans);
+  }
+  .doc-sub{
+    font-family:var(--mono); font-size:11.5px; color:var(--muted); letter-spacing:.02em;
+    display:flex; align-items:center; gap:8px; margin-bottom:18px;
+  }
+  .dot{ width:5px;height:5px;border-radius:50%; background:var(--good); flex-shrink:0; }
+
+  .privacy-strip{
+    display:flex; align-items:center; gap:10px;
+    background:var(--surface); border:1px solid var(--line); border-radius:12px;
+    padding:11px 13px; margin-bottom:20px;
+  }
+  .privacy-strip svg{ flex-shrink:0; }
+  .privacy-strip-text{ font-size:12px; color:var(--muted); line-height:1.4; }
+  .privacy-strip-text b{ color:var(--ink); font-weight:600; }
+
+  .page-grid{
+    display:grid; grid-template-columns:1fr 1fr; gap:12px;
+  }
+  .page-card{
+    background:var(--surface); border:1px solid var(--line); border-radius:14px;
+    overflow:hidden; position:relative;
+  }
+  .page-card .thumb-wrap{
+    aspect-ratio: 3/4; background:var(--surface-2); display:flex; align-items:center; justify-content:center; overflow:hidden;
+  }
+  .page-card img{ width:100%; height:100%; object-fit:cover; display:block; }
+  .page-card .page-num{
+    position:absolute; top:8px; left:8px; background:rgba(20,22,26,.75);
+    color:#fff; font-family:var(--mono); font-size:10.5px; padding:2px 7px; border-radius:20px;
+    backdrop-filter:blur(4px);
+  }
+  .page-card .card-actions{
+    display:flex; border-top:1px solid var(--line);
+  }
+  .card-actions button{
+    flex:1; background:none; border:none; color:var(--muted); padding:8px 0;
+    display:flex; align-items:center; justify-content:center; cursor:pointer;
+  }
+  .card-actions button:not(:last-child){ border-right:1px solid var(--line); }
+  .card-actions button:active{ background:var(--surface-2); }
+  .card-actions button.danger:active{ color:var(--shutter); }
+
+  .add-card{
+    aspect-ratio:3/4; border:1.5px dashed var(--line); border-radius:14px;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px;
+    color:var(--muted); cursor:pointer; background:none;
+  }
+  .add-card span{ font-family:var(--mono); font-size:11px; letter-spacing:.02em; }
+
+  .empty-state{
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    text-align:center; padding:60px 20px 20px; gap:14px; color:var(--muted);
+  }
+  .empty-state h2{ color:var(--ink); font-size:17px; font-weight:650; margin:0; letter-spacing:-0.01em;}
+  .empty-state p{ font-size:13.5px; line-height:1.5; margin:0; max-width:280px; }
+
+  /* ---- Bottom action bar (home) ---- */
+  .bottombar{
+    position:absolute; left:0; right:0; bottom:0;
+    padding:14px 16px max(14px, env(safe-area-inset-bottom));
+    background:linear-gradient(to top, var(--bg) 55%, transparent);
+    display:flex; gap:10px; pointer-events:none;
+  }
+  .bottombar > *{ pointer-events:auto; }
+  .btn{
+    border:none; border-radius:13px; font-family:var(--sans); font-weight:600; font-size:14.5px;
+    padding:14px 16px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px;
+  }
+  .btn-primary{ background:var(--accent); color:#fff; flex:1.3; }
+  .btn-secondary{ background:var(--surface); color:var(--ink); border:1px solid var(--line); flex:1; }
+  .btn:active{ transform:scale(.98); }
+  .btn:disabled{ opacity:.4; }
+
+  /* ---- Capture (file inputs) — visually hidden but NOT display:none.
+     Some mobile/in-app webviews refuse to open the file picker via a
+     programmatic .click() on a display:none input. Keeping it in the
+     layout (just invisible + zero-size + off-screen) keeps triggering
+     reliable, and native <label for> association is what actually opens
+     the picker — no JS needed for that part. ---- */
+  #camera-input, #gallery-input{
+    position:absolute; width:1px; height:1px; padding:0; margin:-1px;
+    overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0;
+    opacity:0; pointer-events:none;
+  }
+
+  .scan-menu{
+    position:absolute; bottom:calc(100% + 10px); left:0; right:0;
+    background:var(--surface-2); border:1px solid var(--line); border-radius:13px;
+    overflow:hidden; box-shadow:0 12px 30px rgba(0,0,0,.5);
+  }
+  .scan-menu-item{
+    display:flex; align-items:center; gap:10px; padding:14px 15px;
+    font-size:14px; font-weight:600; color:var(--ink); cursor:pointer;
+  }
+  .scan-menu-item:not(:last-child){ border-bottom:1px solid var(--line); }
+  .scan-menu-item:active{ background:var(--surface); }
+  .scan-menu-item svg{ color:var(--muted); flex-shrink:0; }
+
+  /* ---- Crop screen ---- */
+  .crop-stage{
+    flex:1; min-height:0; position:relative; background:#0B0C0E;
+    display:flex; align-items:center; justify-content:center; overflow:hidden;
+    padding:22px;
+  }
+  .crop-canvas-wrap{
+    position:relative; touch-action:none;
+    width:100%; height:100%;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .crop-canvas-wrap img{ display:block; max-width:100%; max-height:100%; width:auto; height:auto; pointer-events:none; }
+  .crop-svg{ position:absolute; inset:0; width:100%; height:100%; }
+  .crop-quad{ fill:rgba(61,90,254,.16); stroke:var(--accent); stroke-width:2; }
+  .crop-handle{
+    fill:#fff; stroke:var(--accent); stroke-width:2.5; cursor:grab;
+    touch-action:none;
+  }
+  .crop-edge-handle{
+    fill:var(--accent); stroke:#fff; stroke-width:2; cursor:grab;
+    touch-action:none; opacity:.95;
+  }
+  .crop-hint{
+    position:absolute; top:14px; left:0; right:0; text-align:center;
+    font-family:var(--mono); font-size:11px; color:rgba(255,255,255,.65); letter-spacing:.02em;
+    pointer-events:none; z-index:5;
+    text-shadow:0 1px 4px rgba(0,0,0,.8);
+  }
+  .scan-beam{
+    position:absolute; left:0; right:0; height:38%; top:-40%;
+    background:linear-gradient(to bottom, transparent, rgba(61,90,254,.35), transparent);
+    display:none; pointer-events:none;
+  }
+  .scan-beam.active{ display:block; animation: sweep 0.9s ease-in-out; }
+  @keyframes sweep{ from{top:-40%;} to{top:100%;} }
+
+  .zoom-controls{
+    position:absolute; right:14px; bottom:14px; z-index:6;
+    display:flex; flex-direction:column; border-radius:11px; overflow:hidden;
+    border:1px solid var(--line); box-shadow:0 6px 18px rgba(0,0,0,.4);
+  }
+  .zoom-controls button{
+    width:38px; height:38px; background:rgba(38,42,49,.9); backdrop-filter:blur(6px);
+    color:var(--ink); border:none; font-size:19px; font-weight:600; cursor:pointer;
+    display:flex; align-items:center; justify-content:center; line-height:1;
+  }
+  .zoom-controls button:first-child{ border-bottom:1px solid var(--line); }
+  .zoom-controls button:active{ background:var(--surface-2); }
+
+  .crop-magnifier{
+    position:absolute; display:none; z-index:20; pointer-events:none;
+    width:150px; height:150px; border-radius:50%;
+    border:3px solid #fff; box-shadow:0 10px 26px rgba(0,0,0,.55);
+    background:#0B0C0E;
+  }
+
+  .crop-footer{
+    padding:16px; border-top:1px solid var(--line); flex-shrink:0;
+    display:flex; gap:10px;
+  }
+
+  /* ---- Filter screen ---- */
+  .filter-preview{
+    flex:1; min-height:0; background:#0B0C0E; display:flex; align-items:center; justify-content:center;
+    padding:18px; position:relative; overflow:hidden; touch-action:none;
+  }
+  .filter-preview img{
+    max-width:100%; max-height:100%; border-radius:4px; box-shadow:0 10px 30px rgba(0,0,0,.5);
+    pointer-events:none; transform-origin:center center;
+  }
+  .filter-rail{
+    display:flex; gap:10px; padding:16px; overflow-x:auto; border-top:1px solid var(--line); flex-shrink:0;
+  }
+  .filter-chip{
+    flex-shrink:0; width:64px; text-align:center; cursor:pointer;
+    display:flex; flex-direction:column; align-items:center; gap:6px;
+  }
+  .filter-chip .swatch{
+    width:56px; height:56px; border-radius:10px; overflow:hidden; border:2px solid var(--line);
+    background:var(--surface-2);
+  }
+  .filter-chip.selected .swatch{ border-color:var(--accent); }
+  .filter-chip img{ width:100%; height:100%; object-fit:cover; display:block; }
+  .filter-chip span{ font-family:var(--mono); font-size:10px; color:var(--muted); letter-spacing:.01em; }
+  .filter-chip.selected span{ color:var(--ink); }
+  .filter-footer{ padding:16px; border-top:1px solid var(--line); flex-shrink:0; }
+
+  /* ---- Editor tabs (Filters / Watermark) ---- */
+  .editor-tabs{ display:flex; gap:8px; padding:12px 16px 0; flex-shrink:0; }
+  .editor-tab{
+    flex:1; background:var(--surface); border:1px solid var(--line); color:var(--muted);
+    font-family:var(--sans); font-weight:650; font-size:13px; padding:9px 0; border-radius:10px; cursor:pointer;
+  }
+  .editor-tab.active{ background:var(--accent); border-color:var(--accent); color:#fff; }
+
+  /* ---- Watermark panel ---- */
+  .watermark-panel{
+    display:none; padding:16px; overflow-y:auto; max-height:38vh; flex-shrink:0;
+    border-top:1px solid var(--line);
+  }
+  .wm-toggle-row{ display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; }
+  .wm-toggle-row span{ font-weight:650; font-size:14px; }
+
+  .wm-overrides-section{ margin-bottom:18px; padding-bottom:16px; border-bottom:1px solid var(--line); }
+  .wm-overrides-title{
+    font-family:var(--mono); font-size:10.5px; color:var(--muted); letter-spacing:.03em;
+    text-transform:uppercase; margin-bottom:8px;
+  }
+  .wm-overrides-section .wm-hint{ margin-top:0; margin-bottom:10px; }
+  .wm-page-select{
+    width:100%; background:var(--surface); border:1px solid var(--line); border-radius:10px;
+    color:var(--ink); padding:12px 34px 12px 13px; font-size:13.5px; font-family:var(--sans);
+    -webkit-appearance:none; appearance:none; cursor:pointer;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none'%3E%3Cpath d='M6 9L12 15L18 9' stroke='%238B909B' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat:no-repeat; background-position:right 13px center;
+  }
+  .wm-hint{ font-size:11.5px; color:var(--muted); line-height:1.5; margin-top:8px; }
+  .switch{ position:relative; width:44px; height:26px; flex-shrink:0; display:block; cursor:pointer; }
+  .switch input{ opacity:0; width:0; height:0; position:absolute; }
+  .switch .track{ position:absolute; inset:0; background:var(--surface-2); border:1px solid var(--line); border-radius:20px; transition:.15s; }
+  .switch .thumb{ position:absolute; left:2px; top:2px; width:18px; height:18px; border-radius:50%; background:var(--muted); transition:.15s; }
+  .switch input:checked ~ .track{ background:var(--accent); border-color:var(--accent); }
+  .switch input:checked ~ .track .thumb{ transform:translateX(18px); background:#fff; }
+
+  .wm-field{ margin-bottom:16px; }
+  .wm-field:last-child{ margin-bottom:2px; }
+  .wm-field label{
+    display:block; font-family:var(--mono); font-size:10.5px; color:var(--muted);
+    letter-spacing:.03em; text-transform:uppercase; margin-bottom:9px;
+  }
+  .wm-text-input{
+    width:100%; background:var(--surface); border:1px solid var(--line); border-radius:10px;
+    color:var(--ink); padding:12px 13px; font-size:14px; font-family:var(--sans);
+  }
+  .wm-pill-group{ display:flex; gap:8px; flex-wrap:wrap; }
+  .wm-pill{
+    background:var(--surface); border:1px solid var(--line); color:var(--ink);
+    padding:9px 13px; border-radius:20px; font-size:12.5px; font-weight:650; cursor:pointer;
+    font-family:var(--sans);
+  }
+  .wm-pill.selected{ background:var(--accent); border-color:var(--accent); color:#fff; }
+  .wm-slider-row{ display:flex; align-items:center; gap:12px; }
+  .wm-slider-row input[type=range]{ flex:1; accent-color:var(--accent); }
+  .wm-slider-value{ font-family:var(--mono); font-size:11.5px; color:var(--muted); width:38px; text-align:right; flex-shrink:0; }
+  .wm-color-row{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .wm-swatch{
+    width:30px; height:30px; border-radius:50%; border:2px solid transparent; cursor:pointer; flex-shrink:0;
+  }
+  .wm-swatch.selected{ box-shadow:0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+  .wm-color-custom-ring{
+    width:34px; height:34px; border-radius:50%; padding:2.5px; flex-shrink:0; cursor:pointer;
+    background:conic-gradient(from 0deg, #ff3b30, #ff9500, #ffcc00, #34c759, #30b0c7, #007aff, #af52de, #ff3b30);
+  }
+  .wm-color-custom{
+    width:100%; height:100%; border-radius:50%; border:2px solid var(--surface); padding:0; overflow:hidden; cursor:pointer; background:none; display:block;
+  }
+  .wm-color-custom::-webkit-color-swatch-wrapper{ padding:0; }
+  .wm-color-custom::-webkit-color-swatch{ border:none; border-radius:50%; }
+  .wm-color-custom::-moz-color-swatch{ border:none; border-radius:50%; }
+
+  /* ---- Fullscreen inspector ---- */
+  .fullscreen-viewer{
+    display:none; position:fixed; inset:0; background:#000; z-index:100;
+    align-items:center; justify-content:center; touch-action:none;
+  }
+  .fs-viewer-stage{
+    width:100%; height:100%; display:flex; align-items:center; justify-content:center;
+    overflow:hidden; touch-action:none;
+  }
+  .fs-viewer-stage img{
+    max-width:94%; max-height:94%; pointer-events:none; transform-origin:center center;
+  }
+  .fs-close{
+    position:absolute; top:max(16px, env(safe-area-inset-top)); right:16px; z-index:5;
+    width:38px; height:38px; border-radius:50%;
+    background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.25);
+    color:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer;
+  }
+  .fs-hint{
+    position:absolute; top:max(20px, env(safe-area-inset-top)); left:0; right:0; text-align:center;
+    font-family:var(--mono); font-size:11px; color:rgba(255,255,255,.55); letter-spacing:.02em;
+    pointer-events:none;
+  }
+  #fs-zoom-controls{ right:16px; bottom:max(16px, env(safe-area-inset-bottom)); }
+
+  /* ---- Export screen ---- */
+  .export-body{ flex:1; overflow-y:auto; padding:22px 16px 24px; }
+  .export-preview-stack{
+    display:flex; justify-content:center; margin-bottom:26px; position:relative; height:150px;
+  }
+  .export-preview-stack .stack-page{
+    position:absolute; width:104px; aspect-ratio:3/4; background:var(--paper);
+    border-radius:6px; box-shadow:0 8px 20px rgba(0,0,0,.4);
+  }
+  .export-option{
+    display:flex; align-items:center; justify-content:space-between;
+    background:var(--surface); border:1px solid var(--line); border-radius:13px;
+    padding:14px 15px; margin-bottom:10px; cursor:pointer;
+  }
+  .export-option:active{ background:var(--surface-2); }
+  .eo-left{ display:flex; align-items:center; gap:12px; }
+  .eo-icon{
+    width:38px; height:38px; border-radius:10px; background:var(--surface-2);
+    display:flex; align-items:center; justify-content:center; flex-shrink:0;
+  }
+  .eo-title{ font-size:14.5px; font-weight:600; }
+  .eo-sub{ font-size:11.5px; color:var(--muted); font-family:var(--mono); margin-top:2px; }
+
+  a.download-link{ display:none; }
+
+  /* Toast */
+  .toast{
+    position:absolute; left:50%; bottom:24px; transform:translateX(-50%) translateY(20px);
+    background:var(--good); color:#08150F; font-weight:650; font-size:13px;
+    padding:11px 18px; border-radius:30px; opacity:0; transition:opacity .25s, transform .25s;
+    pointer-events:none; white-space:nowrap; z-index:50;
+  }
+  .toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+
+  ::-webkit-scrollbar{ display:none; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ============ HOME SCREEN ============ -->
+  <section class="screen active" id="screen-home">
+    <div class="topbar">
+      <div class="brand">
+        <div class="brand-mark"></div>
+        <div class="brand-name">Foldout</div>
+      </div>
+      <button class="topbar-action" id="new-doc-btn">New</button>
+    </div>
+
+    <div class="home-scroll">
+      <div class="doc-title-row">
+        <input class="doc-title-input" id="doc-title" value="Untitled scan" maxlength="40">
+      </div>
+      <div class="doc-sub"><span class="dot"></span><span id="page-count-label">0 pages · processed on-device</span></div>
+
+      <div class="privacy-strip">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 2L4 5V11C4 16 7.5 20.5 12 22C16.5 20.5 20 16 20 11V5L12 2Z" stroke="#7A93FF" stroke-width="1.6" stroke-linejoin="round"/><path d="M9 12L11 14L15.5 9.5" stroke="#7A93FF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <div class="privacy-strip-text"><b>Nothing leaves this device.</b> Scans, crop, and export all run locally — no account, no upload.</div>
+      </div>
+
+      <div id="empty-state" class="empty-state" style="display:flex;">
+        <h2>No pages yet</h2>
+        <p>Capture a document to get started. Corners get adjusted by hand next — no auto-detect guesswork.</p>
+      </div>
+
+      <div id="page-grid" class="page-grid" style="display:none;"></div>
+    </div>
+
+    <div class="bottombar">
+      <button class="btn btn-secondary" id="export-btn" disabled>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 3V15M12 15L8 11M12 15L16 11" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 17V19C4 20.1046 4.89543 21 6 21H18C19.1046 21 20 20.1046 20 19V17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        Export
+      </button>
+      <div style="position:relative; flex:1.3;">
+        <button class="btn btn-primary" id="add-page-btn" style="width:100%;">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="white" stroke-width="0"/><path d="M4 8C4 6.34315 5.34315 5 7 5H17C18.6569 5 20 6.34315 20 8V16C20 17.6569 18.6569 19 17 19H7C5.34315 19 4 17.6569 4 16V8Z" stroke="white" stroke-width="1.8"/><circle cx="12" cy="12" r="3.2" stroke="white" stroke-width="1.8"/></svg>
+          <span id="add-page-btn-label">Scan page</span>
+        </button>
+        <div class="scan-menu" id="scan-menu" hidden>
+          <label class="scan-menu-item" for="camera-input">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M4 8C4 6.34315 5.34315 5 7 5H8.5L9.5 3H14.5L15.5 5H17C18.6569 5 20 6.34315 20 8V16C20 17.6569 18.6569 19 17 19H7C5.34315 19 4 17.6569 4 16V8Z" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="12" r="3.2" stroke="currentColor" stroke-width="1.6"/></svg>
+            Take Photo
+          </label>
+          <label class="scan-menu-item" for="gallery-input">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" stroke-width="1.6"/><circle cx="8.5" cy="9.5" r="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M21 15L16 10L5 21" stroke="currentColor" stroke-width="1.6"/></svg>
+            Choose from Library
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+  </section>
+
+  <!-- hidden native camera/file trigger -->
+  <input type="file" id="camera-input" accept="image/*" capture="environment">
+  <input type="file" id="gallery-input" accept="image/*">
+
+  <!-- ============ CROP SCREEN ============ -->
+  <section class="screen" id="screen-crop">
+    <div class="topbar">
+      <button class="icon-btn" id="crop-cancel">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6L18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <div class="brand-name">Adjust corners</div>
+      <button class="topbar-action on" id="crop-reset">Reset</button>
+    </div>
+    <div class="crop-stage" id="crop-stage">
+      <div class="crop-hint">Drag corners or edges to trace the page · pinch to zoom</div>
+      <div class="crop-canvas-wrap" id="crop-wrap">
+        <img id="crop-img" src="" alt="captured page">
+        <svg class="crop-svg" id="crop-svg"></svg>
+        <div class="scan-beam" id="scan-beam"></div>
+      </div>
+      <canvas class="crop-magnifier" id="crop-magnifier" width="150" height="150"></canvas>
+      <div class="zoom-controls">
+        <button id="crop-zoom-in" aria-label="zoom in">+</button>
+        <button id="crop-zoom-out" aria-label="zoom out">−</button>
+      </div>
+    </div>
+    <div class="crop-footer">
+      <button class="btn btn-primary" id="crop-confirm" style="flex:1;">Straighten &amp; continue</button>
+    </div>
+  </section>
+
+  <!-- ============ FILTER SCREEN ============ -->
+  <section class="screen" id="screen-filter">
+    <div class="topbar">
+      <button class="icon-btn" id="filter-back">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 5L8 12L15 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <div class="brand-name">Edit page</div>
+      <button class="icon-btn" id="filter-fullscreen-btn" aria-label="view fullscreen">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M8 4H5C4.44772 4 4 4.44772 4 5V8M20 8V5C20 4.44772 19.5523 4 19 4H16M16 20H19C19.5523 20 20 19.5523 20 19V16M4 16V19C4 19.5523 4.44772 20 5 20H8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+    <div class="editor-tabs">
+      <button class="editor-tab active" id="tab-filters-btn">Filters</button>
+      <button class="editor-tab" id="tab-watermark-btn">Watermark</button>
+    </div>
+    <div class="filter-preview" id="filter-stage">
+      <img id="filter-preview-img" src="" alt="preview">
+      <div class="zoom-controls">
+        <button id="filter-zoom-in" aria-label="zoom in">+</button>
+        <button id="filter-zoom-out" aria-label="zoom out">−</button>
+      </div>
+    </div>
+    <div class="filter-rail" id="filter-rail"></div>
+
+    <div class="watermark-panel" id="watermark-panel">
+      <div class="wm-toggle-row">
+        <span>Apply to every page</span>
+        <label class="switch">
+          <input type="checkbox" id="wm-apply-all" checked>
+          <span class="track"><span class="thumb"></span></span>
+        </label>
+      </div>
+
+      <div class="wm-overrides-section" id="wm-overrides-section" style="display:none;">
+        <div class="wm-overrides-title">Different watermark per page</div>
+        <div class="wm-hint">Pick a page to give it its own watermark instead of the global one — e.g. "X" everywhere but "Y" on page 3.</div>
+        <select class="wm-page-select" id="wm-page-select">
+          <option value="" disabled selected>Choose a page…</option>
+        </select>
+      </div>
+
+      <div class="wm-field">
+        <label>Text</label>
+        <input type="text" id="wm-text" class="wm-text-input" placeholder="e.g. CONFIDENTIAL, Draft, Your Name" maxlength="40">
+        <div class="wm-hint" id="wm-scope-hint">Applies to every page in this document. Turn the switch off above to set a watermark just for this page.</div>
+      </div>
+
+      <div class="wm-field">
+        <label>Placement</label>
+        <div class="wm-pill-group" id="wm-style-group">
+          <button class="wm-pill" data-style="diagonal">Center diagonal</button>
+          <button class="wm-pill" data-style="center">Straight center</button>
+          <button class="wm-pill" data-style="tiled">Tiled repeat</button>
+          <button class="wm-pill" data-style="corner">Corner label</button>
+          <button class="wm-pill" data-style="footer">Footer band</button>
+          <button class="wm-pill" data-style="top">Top band</button>
+          <button class="wm-pill" data-style="custom">Custom</button>
+        </div>
+      </div>
+
+      <div class="wm-field" id="wm-rotation-field" style="display:none;">
+        <label>Rotation</label>
+        <div class="wm-slider-row">
+          <input type="range" id="wm-rotation" min="-180" max="180" value="0">
+          <span class="wm-slider-value" id="wm-rotation-value">0°</span>
+        </div>
+        <div class="wm-hint">Drag directly on the preview above to reposition it.</div>
+      </div>
+
+      <div class="wm-field">
+        <label>Font</label>
+        <div class="wm-pill-group" id="wm-font-group">
+          <button class="wm-pill" data-font="sans">Sans</button>
+          <button class="wm-pill" data-font="serif">Serif</button>
+          <button class="wm-pill" data-font="mono">Mono</button>
+          <button class="wm-pill" data-font="stamp">Stamp</button>
+          <button class="wm-pill" data-font="script">Script</button>
+          <button class="wm-pill" data-font="condensed">Condensed</button>
+        </div>
+      </div>
+
+      <div class="wm-field">
+        <label>Size</label>
+        <div class="wm-slider-row">
+          <input type="range" id="wm-size" min="10" max="100" value="60">
+          <span class="wm-slider-value" id="wm-size-value">60</span>
+        </div>
+      </div>
+
+      <div class="wm-field">
+        <label>Transparency</label>
+        <div class="wm-slider-row">
+          <input type="range" id="wm-opacity" min="5" max="90" value="25">
+          <span class="wm-slider-value" id="wm-opacity-value">25%</span>
+        </div>
+      </div>
+
+      <div class="wm-field">
+        <label>Color</label>
+        <div class="wm-color-row" id="wm-color-row">
+          <div class="wm-swatch" data-color="#8A8F98" style="background:#8A8F98;" title="Gray"></div>
+          <div class="wm-swatch" data-color="#111214" style="background:#111214;" title="Black"></div>
+          <div class="wm-swatch" data-color="#F6F2E9" style="background:#F6F2E9;" title="Cream"></div>
+          <div class="wm-swatch" data-color="#E5484D" style="background:#E5484D;" title="Red"></div>
+          <div class="wm-swatch" data-color="#F5A524" style="background:#F5A524;" title="Orange"></div>
+          <div class="wm-swatch" data-color="#22A55E" style="background:#22A55E;" title="Green"></div>
+          <div class="wm-swatch" data-color="#3D5AFE" style="background:#3D5AFE;" title="Blue"></div>
+          <div class="wm-swatch" data-color="#8B5CF6" style="background:#8B5CF6;" title="Purple"></div>
+          <div class="wm-color-custom-ring" title="Custom color">
+            <input type="color" id="wm-color-custom" class="wm-color-custom" value="#8A8F98" aria-label="custom color">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="filter-footer">
+      <button class="btn btn-primary" id="filter-confirm" style="width:100%;">Continue</button>
+    </div>
+  </section>
+
+  <!-- ============ EXPORT SCREEN ============ -->
+  <section class="screen" id="screen-export">
+    <div class="topbar">
+      <button class="icon-btn" id="export-back">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 5L8 12L15 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <div class="brand-name">Export</div>
+      <div style="width:34px;"></div>
+    </div>
+    <div class="export-body">
+      <div class="export-preview-stack" id="export-stack"></div>
+
+      <div class="export-option" id="export-pdf-opt">
+        <div class="eo-left">
+          <div class="eo-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M6 2H14L19 7V20C19 21.1046 18.1046 22 17 22H6C4.89543 22 4 21.1046 4 20V4C4 2.89543 4.89543 2 6 2Z" stroke="#ECE9E2" stroke-width="1.6"/><path d="M14 2V7H19" stroke="#ECE9E2" stroke-width="1.6"/></svg></div>
+          <div><div class="eo-title">Save as PDF</div><div class="eo-sub" id="pdf-sub">all pages, one file</div></div>
+        </div>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M9 6L15 12L9 18" stroke="var(--muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+
+      <div class="export-option" id="export-jpg-opt">
+        <div class="eo-left">
+          <div class="eo-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" stroke="#ECE9E2" stroke-width="1.6"/><circle cx="8.5" cy="9.5" r="1.5" stroke="#ECE9E2" stroke-width="1.4"/><path d="M21 15L16 10L5 21" stroke="#ECE9E2" stroke-width="1.6"/></svg></div>
+          <div><div class="eo-title">Save as images</div><div class="eo-sub" id="jpg-sub">one JPG per page</div></div>
+        </div>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M9 6L15 12L9 18" stroke="var(--muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<div class="fullscreen-viewer" id="fullscreen-viewer">
+  <button class="fs-close" id="fs-close" aria-label="close fullscreen">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6L18 18" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+  <div class="fs-hint">Pinch or use the buttons to zoom</div>
+  <div class="fs-viewer-stage" id="fs-viewer-stage">
+    <img id="fs-viewer-img" src="" alt="full preview">
+  </div>
+  <div class="zoom-controls" id="fs-zoom-controls">
+    <button id="fs-zoom-in" aria-label="zoom in">+</button>
+    <button id="fs-zoom-out" aria-label="zoom out">−</button>
+  </div>
+</div>
+
+<a class="download-link" id="download-link"></a>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  /* ============================================================
+     STATE
+  ============================================================ */
+  const state = {
+    pages: [],          // {id, dataUrl (final, filtered), filter}
+    pendingWarped: null, // dataUrl of the perspective-corrected image, pre-filter
+    editingPageId: null, // if set, we're re-editing an existing page's filter
+    // Document-wide watermark. Applied at export time on top of every
+    // page's clean image — not baked into page.dataUrl — so it stays
+    // editable/removable without re-scanning anything.
+    watermark: {
+      text: "",
+      style: "diagonal",   // diagonal | tiled | corner | footer
+      font: "sans",        // sans | serif | mono | stamp
+      size: 60,            // 10-100, maps to a fraction of image width
+      opacity: 25,         // 5-90 (%)
+      color: "#8A8F98"
+    }
+  };
+  let idCounter = 1;
+
+  const els = {};
+  ["screen-home","screen-crop","screen-filter","screen-export",
+   "camera-input","gallery-input","scan-menu","add-page-btn","add-page-btn-label","export-btn","new-doc-btn",
+   "doc-title","page-count-label","empty-state","page-grid","toast",
+   "crop-img","crop-svg","crop-wrap","crop-stage","crop-magnifier","crop-confirm","crop-cancel","crop-reset","scan-beam",
+   "crop-zoom-in","crop-zoom-out",
+   "filter-preview-img","filter-stage","filter-rail","filter-confirm","filter-back","filter-fullscreen-btn",
+   "filter-zoom-in","filter-zoom-out",
+   "tab-filters-btn","tab-watermark-btn","watermark-panel",
+   "wm-apply-all","wm-scope-hint","wm-overrides-section","wm-page-select","wm-text","wm-style-group","wm-font-group",
+   "wm-size","wm-size-value","wm-opacity","wm-opacity-value",
+   "wm-rotation-field","wm-rotation","wm-rotation-value",
+   "wm-color-row","wm-color-custom",
+   "fullscreen-viewer","fs-close","fs-viewer-stage","fs-viewer-img","fs-zoom-in","fs-zoom-out",
+   "export-back","export-stack","export-pdf-opt","export-jpg-opt","pdf-sub","jpg-sub",
+   "download-link"
+  ].forEach(id => {
+    const key = id.replace(/-([a-z])/g, (_, ch) => ch.toUpperCase());
+    els[key] = document.getElementById(id);
+  });
+
+  function showScreen(id){
+    document.querySelectorAll(".screen").forEach(s => s.classList.remove("active"));
+    document.getElementById(id).classList.add("active");
+  }
+
+  function toast(msg){
+    els.toast.textContent = msg;
+    els.toast.classList.add("show");
+    clearTimeout(toast._t);
+    toast._t = setTimeout(()=> els.toast.classList.remove("show"), 1800);
+  }
+
+  /* ============================================================
+     HOME SCREEN RENDERING
+  ============================================================ */
+  // Returns a data URL showing this page WITH its resolved watermark drawn
+  // on top, for display purposes only — page.dataUrl itself stays clean.
+  // Cached per-page and invalidated whenever the source image or the
+  // resolved watermark settings actually change.
+  async function getPageThumbSrc(page){
+    const wm = resolveWatermarkForPage(page);
+    if(!watermarkActive(wm)) return page.dataUrl;
+    const cacheKey = page.dataUrl + "::" + JSON.stringify(wm);
+    if(page._thumbCacheKey === cacheKey) return page._thumbCacheUrl;
+    const img = await loadImg(page.dataUrl);
+    const canvas = document.createElement("canvas");
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(img, 0, 0);
+    drawWatermarkOnCanvas(ctx, canvas.width, canvas.height, wm);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+    page._thumbCacheKey = cacheKey;
+    page._thumbCacheUrl = dataUrl;
+    return dataUrl;
+  }
+
+  function renderHome(){
+    const n = state.pages.length;
+    els.pageCountLabel.textContent = n === 0
+      ? "0 pages · processed on-device"
+      : `${n} page${n>1?"s":""} · processed on-device`;
+    els.exportBtn.disabled = n === 0;
+    els.addPageBtnLabel.textContent = n === 0 ? "Scan page" : "Add more pages";
+
+    if(n === 0){
+      els.emptyState.style.display = "flex";
+      els.pageGrid.style.display = "none";
+      return;
+    }
+    els.emptyState.style.display = "none";
+    els.pageGrid.style.display = "grid";
+    els.pageGrid.innerHTML = "";
+
+    state.pages.forEach((p, i) => {
+      const wm = resolveWatermarkForPage(p);
+      const hasWm = watermarkActive(wm);
+      const cacheKey = p.dataUrl + "::" + JSON.stringify(wm);
+      const initialSrc = (hasWm && p._thumbCacheKey === cacheKey) ? p._thumbCacheUrl : p.dataUrl;
+
+      const card = document.createElement("div");
+      card.className = "page-card";
+      card.innerHTML = `
+        <div class="thumb-wrap"><img src="${initialSrc}" alt="page ${i+1}"></div>
+        <div class="page-num">${i+1}</div>
+        <div class="card-actions">
+          <button data-act="left" ${i===0?"disabled":""} aria-label="move left">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M15 5L8 12L15 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <button data-act="filter" aria-label="edit filter">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.8"/><path d="M4 12H7M17 12H20M12 4V7M12 17V20" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </button>
+          <button data-act="watermark" aria-label="edit watermark">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 3C12 3 6 10.5 6 15C6 18.3137 8.68629 21 12 21C15.3137 21 18 18.3137 18 15C18 10.5 12 3 12 3Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+          </button>
+          <button data-act="delete" class="danger" aria-label="delete">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M4 7H20M9 7V4H15V7M6 7L7 20H17L18 7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <button data-act="right" ${i===n-1?"disabled":""} aria-label="move right">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M9 5L16 12L9 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>`;
+      card.querySelectorAll("button").forEach(btn=>{
+        btn.addEventListener("click", ()=> handleCardAction(p.id, btn.dataset.act));
+      });
+      els.pageGrid.appendChild(card);
+
+      if(hasWm && initialSrc !== (p._thumbCacheUrl)){
+        getPageThumbSrc(p).then(url=>{
+          const imgEl = card.querySelector(".thumb-wrap img");
+          if(imgEl) imgEl.src = url;
+        });
+      }
+    });
+  }
+
+  function handleCardAction(pageId, act){
+    const idx = state.pages.findIndex(p=>p.id===pageId);
+    if(idx === -1) return;
+    if(act === "delete"){
+      state.pages.splice(idx,1);
+      renderHome();
+      toast("Page deleted");
+    } else if(act === "left" && idx>0){
+      [state.pages[idx-1], state.pages[idx]] = [state.pages[idx], state.pages[idx-1]];
+      renderHome();
+    } else if(act === "right" && idx<state.pages.length-1){
+      [state.pages[idx+1], state.pages[idx]] = [state.pages[idx], state.pages[idx+1]];
+      renderHome();
+    } else if(act === "filter"){
+      state.editingPageId = pageId;
+      openFilterScreen(state.pages[idx].dataUrlRaw || state.pages[idx].dataUrl, state.pages[idx].filter);
+    } else if(act === "watermark"){
+      state.editingPageId = pageId;
+      openFilterScreen(state.pages[idx].dataUrlRaw || state.pages[idx].dataUrl, state.pages[idx].filter);
+      setFilterTab("watermark");
+    }
+  }
+
+  els.newDocBtn.addEventListener("click", ()=>{
+    if(state.pages.length && !confirm("Start a new document? Current pages will be cleared.")) return;
+    state.pages = [];
+    state.watermark = {
+      text:"", style:"diagonal", font:"sans", size:60, opacity:25, color:"#8A8F98"
+    };
+    els.docTitle.value = "Untitled scan";
+    renderHome();
+  });
+
+  els.addPageBtn.addEventListener("click", (e)=>{
+    e.stopPropagation();
+    els.scanMenu.hidden = !els.scanMenu.hidden;
+  });
+  document.addEventListener("click", (e)=>{
+    if(!els.scanMenu.hidden && !els.scanMenu.contains(e.target) && e.target !== els.addPageBtn && !els.addPageBtn.contains(e.target)){
+      els.scanMenu.hidden = true;
+    }
+  });
+  document.querySelectorAll(".scan-menu-item").forEach(item=>{
+    item.addEventListener("click", ()=>{
+      // The label's native "for" association is what actually opens the
+      // picker — this just resets state and closes the menu beforehand.
+      state.editingPageId = null;
+      els.cameraInput.value = "";
+      els.galleryInput.value = "";
+      els.scanMenu.hidden = true;
+    });
+  });
+
+  /* ============================================================
+     GENERIC PINCH-TO-ZOOM / PAN CONTROLLER
+     Reused by both the crop screen (image + corner/edge handles) and
+     the filter preview screen (image only). Tracks up to 2 pointers:
+     1 finger pans, 2 fingers pinch-zoom. Zoom buttons call zoomBy()
+     directly for devices/testing setups without multi-touch.
+  ============================================================ */
+  function makePinchZoomController(stageEl, onChange, opts={}){
+    const st = { scale:1, tx:0, ty:0 };
+    const minScale = opts.minScale || 1;
+    const maxScale = opts.maxScale || 4;
+    const isIgnored = opts.isIgnoredTarget || (()=>false);
+    const getBaseSize = opts.getBaseSize || (()=>({w:0,h:0}));
+    const pointers = new Map();
+    let panStart = null;
+    let pinchStartDist = null;
+    let pinchStartScale = 1;
+    let panEnabled = true; // single-finger pan can be paused (e.g. while dragging a custom watermark), pinch-zoom still always works
+
+    function clampPan(){
+      const {w,h} = getBaseSize();
+      const maxX = Math.max(0, st.scale-1) * (w/2) + 30;
+      const maxY = Math.max(0, st.scale-1) * (h/2) + 30;
+      st.tx = Math.max(-maxX, Math.min(maxX, st.tx));
+      st.ty = Math.max(-maxY, Math.min(maxY, st.ty));
+    }
+    function apply(){ clampPan(); onChange(st); }
+
+    function down(e){
+      if(isIgnored(e.target)) return;
+      pointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
+      if(pointers.size === 1){
+        panStart = {x:e.clientX, y:e.clientY, tx:st.tx, ty:st.ty};
+      } else if(pointers.size === 2){
+        panStart = null;
+        const pts = [...pointers.values()];
+        pinchStartDist = Math.hypot(pts[0].x-pts[1].x, pts[0].y-pts[1].y) || 1;
+        pinchStartScale = st.scale;
+      }
+    }
+    function move(e){
+      if(!pointers.has(e.pointerId)) return;
+      pointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
+      if(pointers.size === 1 && panStart){
+        if(panEnabled){
+          st.tx = panStart.tx + (e.clientX - panStart.x);
+          st.ty = panStart.ty + (e.clientY - panStart.y);
+          apply();
+        }
+      } else if(pointers.size === 2 && pinchStartDist){
+        const pts = [...pointers.values()];
+        const dist = Math.hypot(pts[0].x-pts[1].x, pts[0].y-pts[1].y);
+        st.scale = Math.max(minScale, Math.min(maxScale, pinchStartScale * (dist/pinchStartDist)));
+        apply();
+      }
+    }
+    function up(e){
+      pointers.delete(e.pointerId);
+      if(pointers.size < 2) pinchStartDist = null;
+      if(pointers.size === 1){
+        const [[, p]] = [...pointers.entries()];
+        panStart = {x:p.x, y:p.y, tx:st.tx, ty:st.ty};
+      } else if(pointers.size === 0){
+        panStart = null;
+      }
+    }
+    stageEl.addEventListener("pointerdown", down);
+    stageEl.addEventListener("pointermove", move);
+    stageEl.addEventListener("pointerup", up);
+    stageEl.addEventListener("pointercancel", up);
+
+    return {
+      getScale: () => st.scale,
+      zoomBy: (delta) => { st.scale = Math.max(minScale, Math.min(maxScale, st.scale+delta)); apply(); },
+      reset: () => { st.scale=1; st.tx=0; st.ty=0; onChange(st); },
+      setPanEnabled: (v) => { panEnabled = v; }
+    };
+  }
+
+  /* ============================================================
+     CAPTURE -> CROP SCREEN
+  ============================================================ */
+  let capturedImg = null;      // Image element, natural size
+  let displayScale = 1;        // displayed px (at zoom=1) -> natural px factor
+  let corners = [];            // 4 points in DISPLAYED px coords, unscaled: TL,TR,BR,BL
+  let dragIndex = -1;
+  let cropBaseSize = {w:0, h:0}; // wrap's own size before any zoom transform
+
+  const cropZoomCtrl = makePinchZoomController(
+    els.cropStage,
+    (st) => { els.cropWrap.style.transform = `translate(${st.tx}px, ${st.ty}px) scale(${st.scale})`; },
+    {
+      isIgnoredTarget: (t) => t.classList && (t.classList.contains("crop-handle") || t.classList.contains("crop-edge-handle")),
+      getBaseSize: () => cropBaseSize
+    }
+  );
+  // The photo itself should never drift while placing corners — only the
+  // handles move. Pinch (2-finger) zoom still works for a closer look;
+  // single-finger panning is disabled so the image stays put.
+  cropZoomCtrl.setPanEnabled(false);
+  els.cropZoomIn.addEventListener("click", () => cropZoomCtrl.zoomBy(0.4));
+  els.cropZoomOut.addEventListener("click", () => cropZoomCtrl.zoomBy(-0.4));
+
+  els.cameraInput.addEventListener("change", (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => loadIntoCropper(ev.target.result);
+    reader.readAsDataURL(file);
+  });
+  els.galleryInput.addEventListener("change", (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => loadIntoCropper(ev.target.result);
+    reader.readAsDataURL(file);
+  });
+
+  function loadIntoCropper(dataUrl){
+    capturedImg = new Image();
+    capturedImg.onload = () => {
+      els.cropImg.src = dataUrl;
+      showScreen("screen-crop");
+      // wait a frame for layout
+      requestAnimationFrame(()=>{
+        requestAnimationFrame(initCropOverlay);
+      });
+    };
+    capturedImg.src = dataUrl;
+  }
+
+  function initCropOverlay(){
+    cropZoomCtrl.reset();
+    const rect = els.cropImg.getBoundingClientRect();
+    displayScale = capturedImg.naturalWidth / rect.width;
+    const w = rect.width, h = rect.height;
+    cropBaseSize = {w, h};
+    const insetX = w*0.09, insetY = h*0.09;
+    corners = [
+      {x: insetX,   y: insetY},
+      {x: w-insetX, y: insetY},
+      {x: w-insetX, y: h-insetY},
+      {x: insetX,   y: h-insetY}
+    ];
+    els.cropSvg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+    els.cropWrap.style.width = w+"px";
+    els.cropWrap.style.height = h+"px";
+    buildCropOverlayDOM();
+    updateCropVisual();
+  }
+
+  // Build the SVG nodes ONCE. Dragging only ever mutates attributes on
+  // these existing nodes afterwards — never recreates them. That's what
+  // keeps the drag smooth: no DOM teardown/rebuild mid-gesture, and
+  // pointer capture never gets orphaned onto a stale, replaced element.
+  //
+  // Besides the 4 corner handles (free 2D movement), 4 edge-midpoint
+  // handles let you nudge a whole side at once: top/bottom move only
+  // vertically, left/right move only horizontally — both corners of
+  // that edge shift together, which is easier than lining up two
+  // corners by hand when a side is basically already straight.
+  let cropPolygonEl = null;
+  let cropHandleEls = [];
+  let cropEdgeHandleEls = [];
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const CROP_EDGES = [
+    {id:"top",    a:0, b:1, axis:"y"},
+    {id:"right",  a:1, b:2, axis:"x"},
+    {id:"bottom", a:2, b:3, axis:"y"},
+    {id:"left",   a:3, b:0, axis:"x"}
+  ];
+
+  function buildCropOverlayDOM(){
+    els.cropSvg.innerHTML = "";
+    cropPolygonEl = document.createElementNS(SVG_NS, "polygon");
+    cropPolygonEl.setAttribute("class", "crop-quad");
+    els.cropSvg.appendChild(cropPolygonEl);
+
+    cropEdgeHandleEls = CROP_EDGES.map((edge) => {
+      const c = document.createElementNS(SVG_NS, "circle");
+      c.setAttribute("class", "crop-edge-handle");
+      c.setAttribute("data-edge", edge.id);
+      c.setAttribute("r", 9);
+      c.addEventListener("pointerdown", onEdgeHandleDown);
+      els.cropSvg.appendChild(c);
+      return c;
+    });
+
+    cropHandleEls = corners.map((p, i) => {
+      const c = document.createElementNS(SVG_NS, "circle");
+      c.setAttribute("class", "crop-handle");
+      c.setAttribute("data-i", i);
+      c.setAttribute("r", 13);
+      c.addEventListener("pointerdown", onHandleDown);
+      els.cropSvg.appendChild(c);
+      return c;
+    });
+  }
+
+  function updateCropVisual(){
+    cropPolygonEl.setAttribute("points", corners.map(p => `${p.x},${p.y}`).join(" "));
+    cropHandleEls.forEach((el, i) => {
+      el.setAttribute("cx", corners[i].x);
+      el.setAttribute("cy", corners[i].y);
+    });
+    cropEdgeHandleEls.forEach((el, idx) => {
+      const edge = CROP_EDGES[idx];
+      const pa = corners[edge.a], pb = corners[edge.b];
+      el.setAttribute("cx", (pa.x+pb.x)/2);
+      el.setAttribute("cy", (pa.y+pb.y)/2);
+    });
+  }
+
+  function localPointFromEvent(e){
+    const rect = els.cropWrap.getBoundingClientRect();
+    const scale = cropZoomCtrl.getScale();
+    return {
+      x: (e.clientX - rect.left) / scale,
+      y: (e.clientY - rect.top) / scale
+    };
+  }
+
+  /* ---------- Magnifier loupe: shows the pixels under your finger,
+     offset above/below the touch point so it's never hidden by it. ---------- */
+  const magnifierCtx = els.cropMagnifier.getContext("2d");
+  const MAG_SIZE = 150;
+  const MAG_ZOOM = 2.15; // slightly less magnified than before — more context around the finger
+
+  function drawMagnifier(localPoint){
+    const natX = localPoint.x * displayScale;
+    const natY = localPoint.y * displayScale;
+    const srcSize = MAG_SIZE / MAG_ZOOM;
+    magnifierCtx.clearRect(0,0,MAG_SIZE,MAG_SIZE);
+    magnifierCtx.save();
+    magnifierCtx.beginPath();
+    magnifierCtx.arc(MAG_SIZE/2, MAG_SIZE/2, MAG_SIZE/2, 0, Math.PI*2);
+    magnifierCtx.clip();
+    magnifierCtx.filter = "brightness(1.25) contrast(1.05)"; // scans are often dim — brighten the loupe view
+    magnifierCtx.drawImage(
+      capturedImg,
+      natX - srcSize/2, natY - srcSize/2, srcSize, srcSize,
+      0, 0, MAG_SIZE, MAG_SIZE
+    );
+    magnifierCtx.filter = "none";
+    magnifierCtx.restore();
+    // crosshair marking the exact handle position
+    magnifierCtx.strokeStyle = "rgba(61,90,254,.95)";
+    magnifierCtx.lineWidth = 1.5;
+    magnifierCtx.beginPath();
+    magnifierCtx.moveTo(MAG_SIZE/2-11, MAG_SIZE/2); magnifierCtx.lineTo(MAG_SIZE/2+11, MAG_SIZE/2);
+    magnifierCtx.moveTo(MAG_SIZE/2, MAG_SIZE/2-11); magnifierCtx.lineTo(MAG_SIZE/2, MAG_SIZE/2+11);
+    magnifierCtx.stroke();
+  }
+
+  function positionMagnifier(e){
+    const stageRect = els.cropStage.getBoundingClientRect();
+    const px = e.clientX - stageRect.left;
+    const py = e.clientY - stageRect.top;
+    let left = px - MAG_SIZE/2;
+    let top = py - MAG_SIZE - 46; // default: above the finger
+    if(top < 4) top = py + 46;    // too close to the top edge -> show below instead
+    left = Math.max(4, Math.min(stageRect.width - MAG_SIZE - 4, left));
+    top = Math.max(4, Math.min(stageRect.height - MAG_SIZE - 4, top));
+    els.cropMagnifier.style.left = left+"px";
+    els.cropMagnifier.style.top = top+"px";
+  }
+
+  function showMagnifierAt(e, localPoint){
+    els.cropMagnifier.style.display = "block";
+    drawMagnifier(localPoint);
+    positionMagnifier(e);
+  }
+  function hideMagnifier(){
+    els.cropMagnifier.style.display = "none";
+  }
+
+  function onHandleDown(e){
+    dragIndex = parseInt(e.target.dataset.i,10);
+    e.target.setPointerCapture(e.pointerId);
+    e.target.addEventListener("pointermove", onHandleMove);
+    e.target.addEventListener("pointerup", onHandleUp);
+    showMagnifierAt(e, corners[dragIndex]);
+  }
+  function onHandleMove(e){
+    if(dragIndex === -1) return;
+    const p = localPointFromEvent(e);
+    const x = Math.max(0, Math.min(cropBaseSize.w, p.x));
+    const y = Math.max(0, Math.min(cropBaseSize.h, p.y));
+    corners[dragIndex] = {x,y};
+    updateCropVisual();
+    showMagnifierAt(e, corners[dragIndex]);
+  }
+  function onHandleUp(e){
+    dragIndex = -1;
+    e.target.removeEventListener("pointermove", onHandleMove);
+    e.target.removeEventListener("pointerup", onHandleUp);
+    hideMagnifier();
+  }
+
+  // Edge-midpoint drag: constrains motion to one axis and moves both
+  // endpoints of that edge together by the same delta.
+  let dragEdge = null;
+  let dragEdgeStartPoint = null;
+  let dragEdgeStartCorners = null;
+
+  function onEdgeHandleDown(e){
+    dragEdge = CROP_EDGES.find(ed => ed.id === e.target.dataset.edge);
+    dragEdgeStartPoint = localPointFromEvent(e);
+    dragEdgeStartCorners = [ {...corners[dragEdge.a]}, {...corners[dragEdge.b]} ];
+    e.target.setPointerCapture(e.pointerId);
+    e.target.addEventListener("pointermove", onEdgeHandleMove);
+    e.target.addEventListener("pointerup", onEdgeHandleUp);
+    const mid = {x:(dragEdgeStartCorners[0].x+dragEdgeStartCorners[1].x)/2, y:(dragEdgeStartCorners[0].y+dragEdgeStartCorners[1].y)/2};
+    showMagnifierAt(e, mid);
+  }
+  function onEdgeHandleMove(e){
+    if(!dragEdge) return;
+    const p = localPointFromEvent(e);
+    const [ca, cb] = dragEdgeStartCorners;
+    if(dragEdge.axis === "y"){
+      let dy = p.y - dragEdgeStartPoint.y;
+      const maxDy = Math.min(cropBaseSize.h - ca.y, cropBaseSize.h - cb.y);
+      const minDy = Math.max(0 - ca.y, 0 - cb.y);
+      dy = Math.max(minDy, Math.min(maxDy, dy));
+      corners[dragEdge.a] = {x:ca.x, y: ca.y + dy};
+      corners[dragEdge.b] = {x:cb.x, y: cb.y + dy};
+    } else {
+      let dx = p.x - dragEdgeStartPoint.x;
+      const maxDx = Math.min(cropBaseSize.w - ca.x, cropBaseSize.w - cb.x);
+      const minDx = Math.max(0 - ca.x, 0 - cb.x);
+      dx = Math.max(minDx, Math.min(maxDx, dx));
+      corners[dragEdge.a] = {x: ca.x + dx, y:ca.y};
+      corners[dragEdge.b] = {x: cb.x + dx, y:cb.y};
+    }
+    updateCropVisual();
+    const mid = {x:(corners[dragEdge.a].x+corners[dragEdge.b].x)/2, y:(corners[dragEdge.a].y+corners[dragEdge.b].y)/2};
+    showMagnifierAt(e, mid);
+  }
+  function onEdgeHandleUp(e){
+    dragEdge = null;
+    e.target.removeEventListener("pointermove", onEdgeHandleMove);
+    e.target.removeEventListener("pointerup", onEdgeHandleUp);
+    hideMagnifier();
+  }
+
+  els.cropReset.addEventListener("click", initCropOverlay);
+  els.cropCancel.addEventListener("click", ()=> showScreen("screen-home"));
+
+  /* ---------- Perspective transform (Heckbert square-to-quad) ---------- */
+  function squareToQuadMatrix(p){ // p: array of 4 {x,y} in order TL,TR,BR,BL
+    const x0=p[0].x,y0=p[0].y, x1=p[1].x,y1=p[1].y, x2=p[2].x,y2=p[2].y, x3=p[3].x,y3=p[3].y;
+    const dx1 = x1-x2, dx2 = x3-x2, dx3 = x0-x1+x2-x3;
+    const dy1 = y1-y2, dy2 = y3-y2, dy3 = y0-y1+y2-y3;
+    let a,b,c,d,e,f,g,h;
+    if(Math.abs(dx3) < 1e-9 && Math.abs(dy3) < 1e-9){
+      a = x1-x0; b = x2-x1; c = x0;
+      d = y1-y0; e = y2-y1; f = y0;
+      g = 0; h = 0;
+    } else {
+      const den = dx1*dy2 - dx2*dy1;
+      g = (dx3*dy2 - dx2*dy3) / den;
+      h = (dx1*dy3 - dx3*dy1) / den;
+      a = x1-x0+g*x1; b = x3-x0+h*x3; c = x0;
+      d = y1-y0+g*y1; e = y3-y0+h*y3; f = y0;
+    }
+    return [a,b,c,d,e,f,g,h,1];
+  }
+
+  // Given output rect W,H, and source quad (in NATURAL image px), warp into a new canvas.
+  function warpPerspective(srcImg, quadNatural, outW, outH){
+    const M = squareToQuadMatrix(quadNatural); // maps unit square -> src quad (natural px)
+
+    // read source pixels
+    const srcCanvas = document.createElement("canvas");
+    srcCanvas.width = srcImg.naturalWidth;
+    srcCanvas.height = srcImg.naturalHeight;
+    const sctx = srcCanvas.getContext("2d");
+    sctx.drawImage(srcImg, 0, 0);
+    const srcData = sctx.getImageData(0,0,srcCanvas.width, srcCanvas.height);
+    const sw = srcCanvas.width, sh = srcCanvas.height;
+
+    const outCanvas = document.createElement("canvas");
+    outCanvas.width = outW; outCanvas.height = outH;
+    const octx = outCanvas.getContext("2d");
+    const outData = octx.createImageData(outW, outH);
+
+    const [a,b,c,d,e,f,g,h] = M;
+
+    for(let y=0; y<outH; y++){
+      const v = y / outH;
+      for(let x=0; x<outW; x++){
+        const u = x / outW;
+        const wgt = g*u + h*v + 1;
+        const sx = (a*u + b*v + c) / wgt;
+        const sy = (d*u + e*v + f) / wgt;
+
+        let r=255,gg=255,bl=255,al=255;
+        if(sx>=0 && sx<sw-1 && sy>=0 && sy<sh-1){
+          // bilinear sample
+          const x0 = Math.floor(sx), y0 = Math.floor(sy);
+          const fx = sx-x0, fy = sy-y0;
+          const idx00 = (y0*sw+x0)*4, idx10=(y0*sw+x0+1)*4, idx01=((y0+1)*sw+x0)*4, idx11=((y0+1)*sw+x0+1)*4;
+          for(let ch=0; ch<4; ch++){
+            const top = srcData.data[idx00+ch]*(1-fx) + srcData.data[idx10+ch]*fx;
+            const bot = srcData.data[idx01+ch]*(1-fx) + srcData.data[idx11+ch]*fx;
+            const val = top*(1-fy) + bot*fy;
+            if(ch===0) r=val; else if(ch===1) gg=val; else if(ch===2) bl=val; else al=val;
+          }
+        }
+        const oi = (y*outW+x)*4;
+        outData.data[oi]=r; outData.data[oi+1]=gg; outData.data[oi+2]=bl; outData.data[oi+3]=al;
+      }
+    }
+    octx.putImageData(outData,0,0);
+    return outCanvas;
+  }
+
+  els.cropConfirm.addEventListener("click", ()=>{
+    els.scanBeam.classList.remove("active");
+    void els.scanBeam.offsetWidth;
+    els.scanBeam.classList.add("active");
+
+    // map displayed corners -> natural image pixel coords
+    const quadNatural = corners.map(p => ({x: p.x*displayScale, y: p.y*displayScale}));
+
+    const dist = (p1,p2) => Math.hypot(p1.x-p2.x, p1.y-p2.y);
+    const [tl,tr,br,bl] = quadNatural;
+    let outW = Math.round(Math.max(dist(tl,tr), dist(bl,br)));
+    let outH = Math.round(Math.max(dist(tl,bl), dist(tr,br)));
+    // cap resolution for performance, keep aspect
+    const MAXDIM = 1500;
+    if(Math.max(outW,outH) > MAXDIM){
+      const s = MAXDIM/Math.max(outW,outH);
+      outW = Math.round(outW*s); outH = Math.round(outH*s);
+    }
+    outW = Math.max(outW, 200); outH = Math.max(outH, 200);
+
+    setTimeout(()=>{
+      const canvas = warpPerspective(capturedImg, quadNatural, outW, outH);
+      state.pendingWarped = canvas.toDataURL("image/jpeg", 0.92);
+      openFilterScreen(state.pendingWarped, "enhance");
+    }, 260); // let the scan-beam animation play
+  });
+
+  /* ============================================================
+     FILTER SCREEN
+  ============================================================ */
+  const FILTERS = [
+    {id:"original", label:"Original"},
+    {id:"enhance",  label:"Enhance"},
+    {id:"bw",       label:"B & W"},
+    {id:"gray",     label:"Gray"}
+  ];
+  let filterSourceDataUrl = null;
+  let filterThumbCache = {};
+  let selectedFilter = "enhance";
+  let filterBaseSize = {w:0, h:0};
+
+  const filterZoomCtrl = makePinchZoomController(
+    els.filterStage,
+    (st) => { els.filterPreviewImg.style.transform = `translate(${st.tx}px, ${st.ty}px) scale(${st.scale})`; },
+    { getBaseSize: () => filterBaseSize }
+  );
+  els.filterZoomIn.addEventListener("click", () => filterZoomCtrl.zoomBy(0.4));
+  els.filterZoomOut.addEventListener("click", () => filterZoomCtrl.zoomBy(-0.4));
+
+  /* ---------- Fullscreen inspector: check filter/watermark up close ---------- */
+  let fsBaseSize = {w:0, h:0};
+  const fsZoomCtrl = makePinchZoomController(
+    els.fsViewerStage,
+    (st) => { els.fsViewerImg.style.transform = `translate(${st.tx}px, ${st.ty}px) scale(${st.scale})`; },
+    { getBaseSize: () => fsBaseSize, maxScale: 6 }
+  );
+  els.fsZoomIn.addEventListener("click", () => fsZoomCtrl.zoomBy(0.5));
+  els.fsZoomOut.addEventListener("click", () => fsZoomCtrl.zoomBy(-0.5));
+
+  function openFullscreenViewer(){
+    els.fsViewerImg.src = els.filterPreviewImg.src;
+    fsZoomCtrl.reset();
+    els.fullscreenViewer.style.display = "flex";
+    requestAnimationFrame(() => {
+      const rect = els.fsViewerImg.getBoundingClientRect();
+      fsBaseSize = {w: rect.width, h: rect.height};
+    });
+  }
+  function closeFullscreenViewer(){
+    els.fullscreenViewer.style.display = "none";
+  }
+  els.filterFullscreenBtn.addEventListener("click", openFullscreenViewer);
+  els.fsClose.addEventListener("click", closeFullscreenViewer);
+
+  /* ---------- Watermark: tabs, controls, drawing ---------- */
+  const WM_FONTS = {
+    sans:      'Arial, Helvetica, sans-serif',
+    serif:     'Georgia, "Times New Roman", serif',
+    mono:      '"Courier New", monospace',
+    stamp:     'Impact, "Arial Narrow", sans-serif',
+    script:    '"Brush Script MT", "Segoe Script", cursive',
+    condensed: '"Arial Narrow", "Helvetica Neue Condensed", sans-serif'
+  };
+
+  // Two layers of watermark state:
+  //  - state.watermark: the document-wide default, used by any page that
+  //    doesn't have its own override.
+  //  - page.watermarkOverride: set only when a page was saved with
+  //    "Apply to every page" switched off — locks that one page to its
+  //    own settings regardless of what the document default is/becomes.
+  // wmDraft is just the working copy the controls are bound to while this
+  // screen is open; it's committed to one of the two above on confirm.
+  let wmDraft = null;
+  let wmApplyToAll = true;
+
+  function watermarkActive(wm){
+    return !!(wm && wm.text && wm.text.trim());
+  }
+
+  function loadWatermarkDraftForCurrentPage(){
+    const existingPage = state.editingPageId ? state.pages.find(p=>p.id===state.editingPageId) : null;
+    if(existingPage && existingPage.watermarkOverride){
+      wmDraft = {...existingPage.watermarkOverride};
+      wmApplyToAll = false;
+    } else {
+      wmDraft = {...state.watermark};
+      wmApplyToAll = true;
+    }
+  }
+
+  function setFilterTab(tab){
+    const isFilters = tab === "filters";
+    els.tabFiltersBtn.classList.toggle("active", isFilters);
+    els.tabWatermarkBtn.classList.toggle("active", !isFilters);
+    els.filterRail.style.display = isFilters ? "flex" : "none";
+    els.watermarkPanel.style.display = isFilters ? "none" : "block";
+    updatePanEnabledForContext();
+  }
+  els.tabFiltersBtn.addEventListener("click", () => setFilterTab("filters"));
+  els.tabWatermarkBtn.addEventListener("click", () => setFilterTab("watermark"));
+
+  function syncWatermarkUI(){
+    const wm = wmDraft;
+    els.wmApplyAll.checked = wmApplyToAll;
+    els.wmScopeHint.textContent = wmApplyToAll
+      ? "Applies to every page in this document. Turn the switch off above to set a watermark just for this page."
+      : "Applies to this page only. Turn the switch on above to make it the default for every page instead.";
+    els.wmText.value = wm.text;
+    els.wmStyleGroup.querySelectorAll(".wm-pill").forEach(p=>{
+      p.classList.toggle("selected", p.dataset.style === wm.style);
+    });
+    els.wmFontGroup.querySelectorAll(".wm-pill").forEach(p=>{
+      p.classList.toggle("selected", p.dataset.font === wm.font);
+    });
+    els.wmSize.value = wm.size;
+    els.wmSizeValue.textContent = wm.size;
+    els.wmOpacity.value = wm.opacity;
+    els.wmOpacityValue.textContent = wm.opacity + "%";
+    els.wmColorRow.querySelectorAll(".wm-swatch").forEach(s=>{
+      s.classList.toggle("selected", s.dataset.color.toLowerCase() === wm.color.toLowerCase());
+    });
+    els.wmColorCustom.value = wm.color;
+    const isCustom = wm.style === "custom";
+    els.wmRotationField.style.display = isCustom ? "block" : "none";
+    els.wmRotation.value = wm.customRotation || 0;
+    els.wmRotationValue.textContent = (wm.customRotation || 0) + "°";
+    renderWatermarkOverridesList();
+  }
+
+  // Lets someone applying a global watermark still carve out exceptions —
+  // "X everywhere, but Y on page 3" — without leaving this screen. Only
+  // shown while "Apply to every page" is on, since with it off you're
+  // already editing a one-off, and the list wouldn't make sense. A
+  // dropdown keeps this compact regardless of how many pages exist.
+  function renderWatermarkOverridesList(){
+    if(!wmApplyToAll || state.pages.length === 0){
+      els.wmOverridesSection.style.display = "none";
+      return;
+    }
+    els.wmOverridesSection.style.display = "block";
+    const options = ['<option value="" disabled selected>Choose a page…</option>'];
+    state.pages.forEach((p, idx) => {
+      const isCurrent = p.id === state.editingPageId;
+      const custom = p.watermarkOverride;
+      let label = `Page ${idx+1} — `;
+      if(isCurrent) label += "currently editing";
+      else if(custom && custom.text) label += `custom "${custom.text.slice(0,16)}"`;
+      else label += "using global";
+      options.push(`<option value="${p.id}" ${isCurrent ? "disabled" : ""}>${label}</option>`);
+    });
+    els.wmPageSelect.innerHTML = options.join("");
+  }
+  els.wmPageSelect.addEventListener("change", ()=>{
+    const pageId = parseInt(els.wmPageSelect.value, 10);
+    if(pageId) jumpToPageWatermark(pageId);
+  });
+
+  // Saves whatever page is currently open (new or existing) exactly like
+  // tapping "Continue" would, so nothing is lost when jumping elsewhere.
+  function commitCurrentPageEdits(){
+    const finalCanvas = filterThumbCache[selectedFilter];
+    const finalDataUrl = finalCanvas.toDataURL("image/jpeg", 0.9);
+    let watermarkOverride = null;
+    if(wmApplyToAll){
+      state.watermark = {...wmDraft};
+    } else {
+      watermarkOverride = {...wmDraft};
+    }
+    if(state.editingPageId){
+      const p = state.pages.find(pg=>pg.id===state.editingPageId);
+      p.dataUrl = finalDataUrl;
+      p.filter = selectedFilter;
+      p.watermarkOverride = watermarkOverride;
+    } else {
+      const newPage = {
+        id: idCounter++,
+        dataUrl: finalDataUrl,
+        dataUrlRaw: filterSourceDataUrl,
+        filter: selectedFilter,
+        watermarkOverride: watermarkOverride
+      };
+      state.pages.push(newPage);
+      state.editingPageId = newPage.id; // so further jumps update this page in place, not duplicate it
+    }
+    renderHome();
+  }
+
+  // Jumps straight into another page's watermark tab to give it its own
+  // text/style — saving the page you were just on first.
+  function jumpToPageWatermark(pageId){
+    commitCurrentPageEdits();
+    const targetPage = state.pages.find(p => p.id === pageId);
+    if(!targetPage) return;
+    state.editingPageId = pageId;
+    openFilterScreen(targetPage.dataUrlRaw || targetPage.dataUrl, targetPage.filter);
+    setFilterTab("watermark");
+    if(!targetPage.watermarkOverride){
+      // Start from a copy of the global watermark so they're editing
+      // "the same X, tweaked" rather than a blank slate.
+      wmDraft = {...state.watermark};
+      wmApplyToAll = false;
+      syncWatermarkUI();
+    }
+  }
+
+  els.wmApplyAll.addEventListener("change", ()=>{
+    wmApplyToAll = els.wmApplyAll.checked;
+    syncWatermarkUI();
+  });
+  els.wmText.addEventListener("input", ()=>{
+    wmDraft.text = els.wmText.value;
+    renderCombinedPreview();
+  });
+  els.wmStyleGroup.querySelectorAll(".wm-pill").forEach(pill=>{
+    pill.addEventListener("click", ()=>{
+      const styleId = pill.dataset.style;
+      wmDraft.style = styleId;
+      // Size and transparency are left exactly as the user set them —
+      // switching placement style shouldn't reset those sliders.
+      if(styleId === "custom"){
+        if(wmDraft.customX === undefined) wmDraft.customX = 0.5;
+        if(wmDraft.customY === undefined) wmDraft.customY = 0.5;
+        if(wmDraft.customRotation === undefined) wmDraft.customRotation = 0;
+      }
+      syncWatermarkUI();
+      renderCombinedPreview();
+      updatePanEnabledForContext();
+    });
+  });
+  els.wmFontGroup.querySelectorAll(".wm-pill").forEach(pill=>{
+    pill.addEventListener("click", ()=>{
+      wmDraft.font = pill.dataset.font;
+      syncWatermarkUI();
+      renderCombinedPreview();
+    });
+  });
+  els.wmSize.addEventListener("input", ()=>{
+    wmDraft.size = parseInt(els.wmSize.value,10);
+    els.wmSizeValue.textContent = wmDraft.size;
+    renderCombinedPreview();
+  });
+  els.wmOpacity.addEventListener("input", ()=>{
+    wmDraft.opacity = parseInt(els.wmOpacity.value,10);
+    els.wmOpacityValue.textContent = wmDraft.opacity + "%";
+    renderCombinedPreview();
+  });
+  els.wmRotation.addEventListener("input", ()=>{
+    wmDraft.customRotation = parseInt(els.wmRotation.value,10);
+    els.wmRotationValue.textContent = wmDraft.customRotation + "°";
+    renderCombinedPreview();
+  });
+  els.wmColorRow.querySelectorAll(".wm-swatch").forEach(swatch=>{
+    swatch.addEventListener("click", ()=>{
+      wmDraft.color = swatch.dataset.color;
+      syncWatermarkUI();
+      renderCombinedPreview();
+    });
+  });
+  els.wmColorCustom.addEventListener("input", ()=>{
+    wmDraft.color = els.wmColorCustom.value;
+    syncWatermarkUI();
+    renderCombinedPreview();
+  });
+
+  // Draws the watermark directly onto an existing canvas context, sized
+  // relative to that canvas's own width so it scales correctly whether
+  // it's a small filter-rail thumbnail or a full-resolution export page.
+  function drawWatermarkOnCanvas(ctx, W, H, wm){
+    if(!watermarkActive(wm)) return;
+    const fontFamily = WM_FONTS[wm.font] || WM_FONTS.sans;
+    const fontSizePx = Math.max(8, Math.round(W * (wm.size/500)));
+    const angle = -45 * Math.PI/180; // classic diagonal-watermark convention
+
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, Math.min(1, wm.opacity/100));
+    ctx.fillStyle = wm.color;
+    ctx.font = `700 ${fontSizePx}px ${fontFamily}`;
+
+    if(wm.style === "corner"){
+      ctx.textAlign = "right";
+      ctx.textBaseline = "bottom";
+      const pad = W*0.025;
+      ctx.fillText(wm.text, W-pad, H-pad);
+
+    } else if(wm.style === "footer"){
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      ctx.fillText(wm.text, W/2, H - H*0.02);
+
+    } else if(wm.style === "top"){
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      ctx.fillText(wm.text, W/2, H*0.02);
+
+    } else if(wm.style === "center"){
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(wm.text, W/2, H/2);
+
+    } else if(wm.style === "diagonal"){
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.translate(W/2, H/2);
+      ctx.rotate(angle);
+      ctx.fillText(wm.text, 0, 0);
+
+    } else if(wm.style === "tiled"){
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.translate(W/2, H/2);
+      ctx.rotate(angle);
+      const textW = ctx.measureText(wm.text).width;
+      const stepX = textW + fontSizePx*2.2;
+      const stepY = fontSizePx*3.2;
+      const range = Math.sqrt(W*W + H*H); // covers every corner once rotated
+      for(let y=-range; y<range; y+=stepY){
+        for(let x=-range; x<range; x+=stepX){
+          ctx.fillText(wm.text, x, y);
+        }
+      }
+
+    } else if(wm.style === "custom"){
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      const cx = (wm.customX ?? 0.5) * W;
+      const cy = (wm.customY ?? 0.5) * H;
+      ctx.translate(cx, cy);
+      ctx.rotate((wm.customRotation || 0) * Math.PI/180);
+      ctx.fillText(wm.text, 0, 0);
+    }
+    ctx.restore();
+  }
+
+  // Composites the current filter's clean canvas + watermark (if enabled)
+  // into the live preview — used any time filter/watermark settings change.
+  function renderCombinedPreview(){
+    const baseCanvas = filterThumbCache[selectedFilter];
+    if(!baseCanvas) return;
+    let outCanvas = baseCanvas;
+    if(watermarkActive(wmDraft)){
+      outCanvas = document.createElement("canvas");
+      outCanvas.width = baseCanvas.width;
+      outCanvas.height = baseCanvas.height;
+      const ctx = outCanvas.getContext("2d");
+      ctx.drawImage(baseCanvas, 0, 0);
+      drawWatermarkOnCanvas(ctx, outCanvas.width, outCanvas.height, wmDraft);
+    }
+    els.filterPreviewImg.src = outCanvas.toDataURL("image/jpeg", 0.9);
+  }
+
+  // Custom placement: drag directly on the preview to move it. Dragging
+  // normally pans the zoomed-in view, so while in custom+watermark mode
+  // we redirect single-finger drags to repositioning instead (pinch
+  // still zooms as usual, for checking placement up close).
+  function isCustomDragContext(){
+    return els.watermarkPanel.style.display !== "none" && wmDraft && wmDraft.style === "custom";
+  }
+  function updatePanEnabledForContext(){
+    if(filterZoomCtrl) filterZoomCtrl.setPanEnabled(!isCustomDragContext());
+  }
+  let customDragActive = false;
+  function updateCustomPositionFromEvent(e){
+    const rect = els.filterPreviewImg.getBoundingClientRect();
+    if(rect.width === 0 || rect.height === 0) return;
+    let fx = (e.clientX - rect.left) / rect.width;
+    let fy = (e.clientY - rect.top) / rect.height;
+    wmDraft.customX = Math.max(0, Math.min(1, fx));
+    wmDraft.customY = Math.max(0, Math.min(1, fy));
+    renderCombinedPreview();
+  }
+  els.filterStage.addEventListener("pointerdown", (e)=>{
+    if(!isCustomDragContext()) return;
+    customDragActive = true;
+    updateCustomPositionFromEvent(e);
+  });
+  els.filterStage.addEventListener("pointermove", (e)=>{
+    if(customDragActive) updateCustomPositionFromEvent(e);
+  });
+  function endCustomDrag(){ customDragActive = false; }
+  els.filterStage.addEventListener("pointerup", endCustomDrag);
+  els.filterStage.addEventListener("pointercancel", endCustomDrag);
+
+  function applyFilter(srcCanvasOrImg, filterId){
+    const canvas = document.createElement("canvas");
+    canvas.width = srcCanvasOrImg.width || srcCanvasOrImg.naturalWidth;
+    canvas.height = srcCanvasOrImg.height || srcCanvasOrImg.naturalHeight;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(srcCanvasOrImg, 0, 0, canvas.width, canvas.height);
+    if(filterId === "original") return canvas;
+
+    const data = ctx.getImageData(0,0,canvas.width, canvas.height);
+    const d = data.data;
+    for(let i=0;i<d.length;i+=4){
+      const r=d[i], g=d[i+1], b=d[i+2];
+      const gray = 0.299*r + 0.587*g + 0.114*b;
+      if(filterId === "gray"){
+        d[i]=d[i+1]=d[i+2]=gray;
+      } else if(filterId === "bw"){
+        const v = gray > 150 ? 255 : (gray < 90 ? 0 : gray);
+        const bw = v > 128 ? 255 : 0;
+        d[i]=d[i+1]=d[i+2]= gray > 140 ? 255 : 0;
+      } else if(filterId === "enhance"){
+        const contrast = 1.28, bright = 18;
+        d[i]   = clamp((r-128)*contrast+128+bright);
+        d[i+1] = clamp((g-128)*contrast+128+bright);
+        d[i+2] = clamp((b-128)*contrast+128+bright);
+      }
+    }
+    ctx.putImageData(data,0,0);
+    return canvas;
+  }
+  function clamp(v){ return Math.max(0, Math.min(255, v)); }
+
+  function openFilterScreen(sourceDataUrl, presetFilter){
+    filterSourceDataUrl = sourceDataUrl;
+    selectedFilter = presetFilter || "enhance";
+    filterThumbCache = {};
+    loadWatermarkDraftForCurrentPage();
+    setFilterTab("filters");
+    syncWatermarkUI();
+    const img = new Image();
+    img.onload = () => {
+      filterThumbCache._img = img;
+      renderFilterRail(img);
+      updateFilterPreview(img);
+      showScreen("screen-filter");
+    };
+    img.src = sourceDataUrl;
+  }
+
+  function renderFilterRail(img){
+    els.filterRail.innerHTML = "";
+    FILTERS.forEach(f=>{
+      const canvas = applyFilter(img, f.id);
+      const thumbUrl = canvas.toDataURL("image/jpeg", 0.7);
+      filterThumbCache[f.id] = canvas;
+      const chip = document.createElement("div");
+      chip.className = "filter-chip" + (f.id===selectedFilter ? " selected":"");
+      chip.dataset.id = f.id;
+      chip.innerHTML = `<div class="swatch"><img src="${thumbUrl}"></div><span>${f.label}</span>`;
+      chip.addEventListener("click", ()=>{
+        selectedFilter = f.id;
+        document.querySelectorAll(".filter-chip").forEach(c=>c.classList.remove("selected"));
+        chip.classList.add("selected");
+        updateFilterPreview(img);
+      });
+      els.filterRail.appendChild(chip);
+    });
+  }
+
+  function updateFilterPreview(img){
+    renderCombinedPreview();
+    // Reset zoom/pan and re-measure the rendered box for the new image
+    // once it's actually laid out (needed so pan clamping has real bounds).
+    filterZoomCtrl.reset();
+    requestAnimationFrame(() => {
+      const rect = els.filterPreviewImg.getBoundingClientRect();
+      filterBaseSize = {w: rect.width, h: rect.height};
+    });
+  }
+
+  els.filterBack.addEventListener("click", ()=>{
+    if(state.editingPageId) showScreen("screen-home");
+    else showScreen("screen-crop");
+  });
+
+  els.filterConfirm.addEventListener("click", ()=>{
+    const wasNewPage = !state.editingPageId;
+    commitCurrentPageEdits();
+    state.editingPageId = null;
+    toast(wasNewPage ? "Page added" : "Filter updated");
+    showScreen("screen-home");
+  });
+
+  /* ============================================================
+     EXPORT SCREEN
+  ============================================================ */
+  function resolveWatermarkForPage(page){
+    return page.watermarkOverride || state.watermark;
+  }
+
+  els.exportBtn.addEventListener("click", ()=>{
+    if(state.pages.length===0) return;
+    const wmOn = state.pages.some(p => watermarkActive(resolveWatermarkForPage(p)));
+    const wmTag = wmOn ? " · watermarked" : "";
+    els.pdfSub.textContent = `${state.pages.length} page${state.pages.length>1?"s":""} · one file${wmTag}`;
+    els.jpgSub.textContent = `${state.pages.length} file${state.pages.length>1?"s":""}, saved one by one${wmTag}`;
+    renderExportStack();
+    showScreen("screen-export");
+  });
+  els.exportBack.addEventListener("click", ()=> showScreen("screen-home"));
+
+  function renderExportStack(){
+    els.exportStack.innerHTML = "";
+    const n = Math.min(state.pages.length, 3);
+    for(let i=0;i<n;i++){
+      const div = document.createElement("div");
+      div.className = "stack-page";
+      const offset = (n-1-i) * 8;
+      const rot = (i - (n-1)/2) * 4;
+      div.style.transform = `translateY(${offset}px) rotate(${rot}deg)`;
+      div.style.zIndex = i;
+      div.style.backgroundImage = `url(${state.pages[state.pages.length-1-i].dataUrl})`;
+      div.style.backgroundSize = "cover";
+      div.style.backgroundPosition = "center";
+      els.exportStack.appendChild(div);
+    }
+  }
+
+  function safeName(){
+    const raw = els.docTitle.value.trim() || "scan";
+    return raw.replace(/[^a-z0-9\-_ ]/gi,"").trim().replace(/\s+/g,"-") || "scan";
+  }
+
+  function triggerDownload(blobUrl, filename){
+    els.downloadLink.href = blobUrl;
+    els.downloadLink.download = filename;
+    document.body.appendChild(els.downloadLink);
+    els.downloadLink.click();
+  }
+
+  function loadImg(src){
+    return new Promise(res=>{
+      const i = new Image();
+      i.onload = ()=>res(i);
+      i.src = src;
+    });
+  }
+
+  // Returns an <img> ready for export: the page's clean image, or — if a
+  // watermark is on — a fresh canvas with the watermark drawn on top,
+  // rendered at the page's full resolution (not the small preview size).
+  async function getExportImage(page){
+    const img = await loadImg(page.dataUrl);
+    const wm = resolveWatermarkForPage(page);
+    if(!watermarkActive(wm)) return img;
+    const canvas = document.createElement("canvas");
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(img, 0, 0);
+    drawWatermarkOnCanvas(ctx, canvas.width, canvas.height, wm);
+    return loadImg(canvas.toDataURL("image/jpeg", 0.92));
+  }
+
+  els.exportPdfOpt.addEventListener("click", async ()=>{
+    if(!window.jspdf){ toast("PDF library still loading — try again"); return; }
+    const { jsPDF } = window.jspdf;
+    let pdf = null;
+    for(let i=0;i<state.pages.length;i++){
+      const img = await getExportImage(state.pages[i]);
+      const ratio = img.naturalWidth / img.naturalHeight;
+      const pageW = 210, pageH = 297; // A4 mm portrait
+      let w = pageW - 16, h = w/ratio;
+      if(h > pageH-16){ h = pageH-16; w = h*ratio; }
+      if(!pdf) pdf = new jsPDF({unit:"mm", format:"a4"});
+      else pdf.addPage();
+      const x = (pageW-w)/2, y = (pageH-h)/2;
+      pdf.addImage(img, "JPEG", x, y, w, h, undefined, "FAST");
+    }
+    const blobUrl = pdf.output("bloburl");
+    triggerDownload(blobUrl, safeName()+".pdf");
+    toast("PDF ready");
+  });
+
+  els.exportJpgOpt.addEventListener("click", async ()=>{
+    toast(`Saving ${state.pages.length} image${state.pages.length>1?"s":""}…`);
+    for(let i=0;i<state.pages.length;i++){
+      const img = await getExportImage(state.pages[i]);
+      triggerDownload(img.src, `${safeName()}-${String(i+1).padStart(2,"0")}.jpg`);
+      await new Promise(r => setTimeout(r, 250));
+    }
+  });
+
+  /* init */
+  renderHome();
+})();
+</script>
+</body>
+</html>
