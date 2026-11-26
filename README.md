@@ -10,6 +10,8 @@ The whole scanner is one self-contained HTML file (`foldout-scanner.html`). Ther
 
 ## Android app
 
+Putting it on the Google Play Store: see [PLAY_STORE.md](PLAY_STORE.md).
+
 `android/` is a minimal Kotlin app that shows `foldout-scanner.html` in a WebView. The HTML is copied in from the repository root at build time, so the website and the app are always the same scanner. The app adds only what a web page cannot do by itself:
 
 - **Take Photo** opens the phone's camera app; **Choose from Library** opens the system photo picker
@@ -34,6 +36,14 @@ GitHub Actions builds the app on every push and attaches the debug APK to each r
 ### Capture
 - "Scan page" opens a choice of **Take Photo** (direct camera launch) or **Choose from Library** (existing photo)
 - Works via native `<input type="file">`, so it's compatible across iOS/Android browsers without any permissions setup beyond the OS camera prompt
+
+### Automatic page detection
+- When a photo comes in, Foldout finds the page and puts the four corners on it
+- When it is sure (score ≥ 0.95), it straightens the page straight away and skips the corner screen; **Back** returns there if you want to adjust. Switch this off with *Auto-crop when a page is found* on the corner screen
+- When it is not sure, the corner screen opens with its best guess; when it finds nothing, the corners start at the usual default
+- Runs on a 320 px copy of the photo in plain JavaScript (no model, no library, about 20–60 ms), so it works offline and in the app
+- How it works: two ways of separating page from background (a brightness split with holes filled in, and an outline traced from brightness edges), the largest four-sided shape inside each, each side straightened with a RANSAC line fit (so a thumb over a corner or a dog-ear is ignored) and moved onto the sharpest brightness edge, then the candidate whose sides run along real edges wins
+- Tested on 18 synthetic scenes with known corners (rotated, perspective, low light, white-on-white, shadows, thumbs, clutter, cut-off pages, no page): 17 pass, with corners within 0.4% of the photo's diagonal (1% for the page cut off by the photo's edge). The miss is two overlapping sheets, which merge into one outline; it is flagged as unsure, so the corner screen opens. `tests/` has the generator and the test, and CI runs them
 
 ### Crop & straighten
 - Drag 4 corner handles to trace a page's actual edges over a photo taken at an angle
@@ -84,12 +94,12 @@ Everything — image capture, the perspective warp, filters, watermark compositi
 
 ## Known limitations
 
-- No automatic edge detection — crop corners start at a fixed inset and must be dragged into place by hand
+- Page detection can merge overlapping sheets and is untested on real-world photos of unusual pages (very glossy, see-through, or the same colour as the table); the corner screen is always there to fix it
 - JPG export downloads one file at a time rather than as a single zip
 - Tested primarily on mobile Chrome/Safari; desktop browsers will work but the UI is optimized for a phone-width screen
 
 ## Possible next steps
 
-- Automatic edge/border detection (e.g. via a lightweight on-device CV model)
+- Shadow and glare removal on the straightened page
 - OCR / searchable-text layer in the exported PDF
 - Zip bundling for multi-image export
