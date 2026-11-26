@@ -233,8 +233,12 @@
   }
 
   .crop-footer{
-    padding:16px; border-top:1px solid var(--line); flex-shrink:0;
-    display:flex; gap:10px;
+    padding:12px 16px 16px; border-top:1px solid var(--line); flex-shrink:0;
+    display:flex; flex-direction:column; gap:12px;
+  }
+  .auto-crop-row{
+    display:flex; align-items:center; justify-content:space-between;
+    font-size:13px; color:var(--muted);
   }
 
   /* ---- Filter screen ---- */
@@ -453,8 +457,10 @@
       </div>
     </div>
 
-    <div class="toast" id="toast"></div>
   </section>
+
+  <!-- Outside the screens, so messages show on every screen. -->
+  <div class="toast" id="toast"></div>
 
   <!-- hidden native camera/file trigger -->
   <input type="file" id="camera-input" accept="image/*" capture="environment">
@@ -470,7 +476,7 @@
       <button class="topbar-action on" id="crop-reset">Reset</button>
     </div>
     <div class="crop-stage" id="crop-stage">
-      <div class="crop-hint">Drag corners or edges to trace the page · pinch to zoom</div>
+      <div class="crop-hint" id="crop-hint">Drag corners or edges to trace the page · pinch to zoom</div>
       <div class="crop-canvas-wrap" id="crop-wrap">
         <img id="crop-img" src="" alt="captured page">
         <svg class="crop-svg" id="crop-svg"></svg>
@@ -483,7 +489,14 @@
       </div>
     </div>
     <div class="crop-footer">
-      <button class="btn btn-primary" id="crop-confirm" style="flex:1;">Straighten &amp; continue</button>
+      <div class="auto-crop-row">
+        <span>Auto-crop when a page is found</span>
+        <label class="switch">
+          <input type="checkbox" id="auto-crop" checked>
+          <span class="track"><span class="thumb"></span></span>
+        </label>
+      </div>
+      <button class="btn btn-primary" id="crop-confirm">Straighten &amp; continue</button>
     </div>
   </section>
 
@@ -684,6 +697,7 @@
    "camera-input","gallery-input","scan-menu","add-page-btn","add-page-btn-label","export-btn","new-doc-btn",
    "doc-title","page-count-label","empty-state","page-grid","toast",
    "crop-img","crop-svg","crop-wrap","crop-stage","crop-magnifier","crop-confirm","crop-cancel","crop-reset","scan-beam",
+   "crop-hint","auto-crop",
    "crop-zoom-in","crop-zoom-out",
    "filter-preview-img","filter-stage","filter-rail","filter-confirm","filter-back","filter-fullscreen-btn",
    "filter-zoom-in","filter-zoom-out",
@@ -1009,13 +1023,451 @@
 
   function showInCropper(img, url){
     capturedImg = img;
+    detected = detectInImage(img);
     els.cropImg.src = url;
     showScreen("screen-crop");
     // wait a frame for layout
     requestAnimationFrame(()=>{
-      requestAnimationFrame(initCropOverlay);
+      requestAnimationFrame(() => {
+        initCropOverlay();
+        // Sure enough of the page (and allowed to): straighten it straight away.
+        // Back on the next screen returns here, so a wrong crop is one tap to fix.
+        if(autoCropOn() && detected && detected.score >= AUTO_CROP_SCORE){
+          toast("Page found — cropped automatically");
+          els.cropConfirm.click();
+        }
+      });
     });
   }
+
+  // Skipping the corner screen is on unless switched off; the choice is remembered.
+  const AUTO_CROP_SCORE = 0.95;
+  const AUTO_CROP_KEY = "foldout.autoCrop";
+  function autoCropOn(){
+    try{ return localStorage.getItem(AUTO_CROP_KEY) !== "off"; }catch(_){ return true; }
+  }
+  els.autoCrop.checked = autoCropOn();
+  els.autoCrop.addEventListener("change", () => {
+    try{ localStorage.setItem(AUTO_CROP_KEY, els.autoCrop.checked ? "on" : "off"); }catch(_){}
+  });
+
+  /* ============================================================
+     PAGE DETECTION
+     Finds the four corners of a sheet of paper in a photo, so the crop
+     screen opens with the corners already on the page.
+
+     It works on a small copy of the photo (DETECT_SIZE px on the long
+     side) and tries two ways of separating the page from what is around
+     it, keeping whichever gives the more convincing page:
+
+       brightness  The photo is split into light and dark (Otsu's
+                   threshold). Whichever of the two covers most of the
+                   photo's border is the background; the rest, with its
+                   holes (text, pictures) filled in, is the page.
+       edges       The outline of the page is found as a line of strong
+                   brightness change (Sobel). Everything that can be
+                   reached from the photo's border without crossing such
+                   a line is background; what is left enclosed is the page.
+                   This finds a white page on a light table, where the
+                   brightness split cannot.
+
+     The biggest such area is wrapped in its convex hull, and the
+     largest four-cornered shape that fits in the hull is the page. It
+     is only accepted if it looks like a page: convex, no corner sharper
+     than 35°, between 12% and 98% of the photo, and filling most of the
+     area it was found from. Otherwise null, and the corners start at
+     their usual default.
+
+     Returns [TL, TR, BR, BL] in the given image's pixels, plus a score
+     (0–1) for how sure it is, or null.
+  ============================================================ */
+  const DETECT_SIZE = 320;
+
+  function detectDocument(rgba, W, H){
+    const N = W*H;
+
+    // Brightness, softened twice with a 5×5 box blur so paper texture and text fade.
+    let gray = new Float32Array(N);
+    for(let i=0, j=0; i<N; i++, j+=4) gray[i] = 0.299*rgba[j] + 0.587*rgba[j+1] + 0.114*rgba[j+2];
+    function blur(src){
+      const tmp = new Float32Array(N), out = new Float32Array(N), R = 2;
+      for(let y=0; y<H; y++){
+        const row = y*W;
+        for(let x=0; x<W; x++){
+          let s = 0, n = 0;
+          for(let k=-R; k<=R; k++){ const xx = x+k; if(xx>=0 && xx<W){ s += src[row+xx]; n++; } }
+          tmp[row+x] = s/n;
+        }
+      }
+      for(let y=0; y<H; y++){
+        for(let x=0; x<W; x++){
+          let s = 0, n = 0;
+          for(let k=-R; k<=R; k++){ const yy = y+k; if(yy>=0 && yy<H){ s += tmp[yy*W+x]; n++; } }
+          out[y*W+x] = s/n;
+        }
+      }
+      return out;
+    }
+    gray = blur(blur(gray));
+
+    // How sharply brightness changes at each pixel (Sobel). Used to find the
+    // page's outline, and to put each side exactly on it at the end.
+    const mag = new Float32Array(N);
+    for(let y=1; y<H-1; y++){
+      for(let x=1; x<W-1; x++){
+        const i = y*W + x;
+        const gx = gray[i-W+1] + 2*gray[i+1] + gray[i+W+1] - gray[i-W-1] - 2*gray[i-1] - gray[i+W-1];
+        const gy = gray[i+W-1] + 2*gray[i+W] + gray[i+W+1] - gray[i-W-1] - 2*gray[i-W] - gray[i-W+1];
+        mag[i] = Math.hypot(gx, gy);
+      }
+    }
+
+    // A fixed-seed random generator, so the same photo always gives the same corners.
+    let seed = 12345;
+    const random = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+
+    // Marks every pixel reachable from the border through pixels where open[i] is 1.
+    function floodFromBorder(open){
+      const seen = new Uint8Array(N);
+      const stack = new Int32Array(N);
+      let top = 0;
+      const push = (i) => { if(open[i] && !seen[i]){ seen[i] = 1; stack[top++] = i; } };
+      for(let x=0; x<W; x++){ push(x); push((H-1)*W + x); }
+      for(let y=0; y<H; y++){ push(y*W); push(y*W + W-1); }
+      while(top){
+        const i = stack[--top], x = i % W;
+        if(x > 0) push(i-1);
+        if(x < W-1) push(i+1);
+        if(i >= W) push(i-W);
+        if(i < N-W) push(i+W);
+      }
+      return seen;
+    }
+
+    // The biggest connected area of pixels where mask[i] is 1: its pixel count and its convex hull.
+    function biggestArea(mask){
+      const label = new Int32Array(N);
+      const stack = new Int32Array(N);
+      let best = null, next = 0;
+      for(let start=0; start<N; start++){
+        if(!mask[start] || label[start]) continue;
+        next++;
+        let top = 0, count = 0;
+        label[start] = next; stack[top++] = start;
+        // Leftmost and rightmost pixel of every row are enough to build the hull.
+        const minX = new Int32Array(H).fill(W), maxX = new Int32Array(H).fill(-1);
+        while(top){
+          const i = stack[--top], x = i % W, y = (i - x) / W;
+          count++;
+          if(x < minX[y]) minX[y] = x;
+          if(x > maxX[y]) maxX[y] = x;
+          const visit = (j) => { if(mask[j] && !label[j]){ label[j] = next; stack[top++] = j; } };
+          if(x > 0) visit(i-1);
+          if(x < W-1) visit(i+1);
+          if(y > 0) visit(i-W);
+          if(y < H-1) visit(i+W);
+        }
+        if(!best || count > best.count){
+          const pts = [];
+          for(let y=0; y<H; y++) if(maxX[y] >= 0){ pts.push({x:minX[y], y}); pts.push({x:maxX[y]+1, y}); pts.push({x:minX[y], y:y+1}); pts.push({x:maxX[y]+1, y:y+1}); }
+          best = { count, pts, id: next };
+        }
+      }
+      if(!best) return null;
+      best.hull = convexHull(best.pts);
+      // The outline, for fitting the page's sides: the outermost pixel of the
+      // area in every row (left and right) and every column (top and bottom).
+      const edge = [];
+      const top = new Int32Array(W).fill(H), bottom = new Int32Array(W).fill(-1);
+      for(let y=0; y<H; y++){
+        let first = -1, last = -1;
+        for(let x=0; x<W; x++){
+          if(label[y*W+x] !== best.id) continue;
+          if(first < 0) first = x;
+          last = x;
+          if(y < top[x]) top[x] = y;
+          if(y > bottom[x]) bottom[x] = y;
+        }
+        if(first >= 0){ edge.push({x:first, y:y+0.5}); edge.push({x:last+1, y:y+0.5}); }
+      }
+      for(let x=0; x<W; x++) if(bottom[x] >= 0){ edge.push({x:x+0.5, y:top[x]}); edge.push({x:x+0.5, y:bottom[x]+1}); }
+      best.edge = edge;
+      return best;
+    }
+
+    // Straightens the four sides. For each side, the straight line that the
+    // most outline points agree with (RANSAC) is found in a wide band around
+    // it, so points that stick out (a thumb over a corner, a dog-ear, a sheet
+    // behind) are outvoted. The line is then moved to where the brightness
+    // changes most sharply, which is where the paper's edge really is. The
+    // corners are where neighbouring sides meet, even if a corner is hidden.
+    function fitLine(pts){
+      let mx = 0, my = 0;
+      for(const p of pts){ mx += p.x; my += p.y; }
+      mx /= pts.length; my /= pts.length;
+      let sxx = 0, sxy = 0, syy = 0;
+      for(const p of pts){ const dx = p.x-mx, dy = p.y-my; sxx += dx*dx; sxy += dx*dy; syy += dy*dy; }
+      const angle = 0.5*Math.atan2(2*sxy, sxx - syy);
+      const nx = -Math.sin(angle), ny = Math.cos(angle);
+      return { nx, ny, c: -(nx*mx + ny*my) };
+    }
+
+    function refineSides(quad, edge){
+      const lines = [];
+      for(let s=0; s<4; s++){
+        const a = quad[s], b = quad[(s+1)%4];
+        const len = Math.hypot(b.x-a.x, b.y-a.y);
+        if(len < 8) return quad;
+        const ux = (b.x-a.x)/len, uy = (b.y-a.y)/len;
+        const nx0 = -uy, ny0 = ux, c0 = -(nx0*a.x + ny0*a.y);
+        const band = edge.filter(p => {
+          const t = ((p.x-a.x)*ux + (p.y-a.y)*uy) / len;
+          return t > -0.05 && t < 1.05 && Math.abs(nx0*p.x + ny0*p.y + c0) < Math.max(6, 0.18*len);
+        });
+        if(band.length < 8) return quad;
+        // RANSAC: lines through two random band points, within 25° of the side's direction.
+        let best = null, bestCount = 0;
+        for(let k=0; k<200; k++){
+          const p = band[(random()*band.length)|0], q = band[(random()*band.length)|0];
+          const dl = Math.hypot(q.x-p.x, q.y-p.y);
+          if(dl < len*0.2) continue;
+          const lx = (q.x-p.x)/dl, ly = (q.y-p.y)/dl;
+          if(Math.abs(lx*ux + ly*uy) < 0.9) continue;
+          const nx = -ly, ny = lx, c = -(nx*p.x + ny*p.y);
+          let count = 0;
+          for(const r of band) if(Math.abs(nx*r.x + ny*r.y + c) < 1.5) count++;
+          if(count > bestCount){ bestCount = count; best = {nx, ny, c}; }
+        }
+        if(!best || bestCount < 8) return quad;
+        let line = fitLine(band.filter(r => Math.abs(best.nx*r.x + best.ny*r.y + best.c) < 1.5));
+
+        // Slide the line along its normal to the strongest brightness change nearby.
+        const { nx, ny } = line;
+        const dx = -ny, dy = nx;  // along the line
+        const ox = -line.c*nx, oy = -line.c*ny;  // a point on it
+        const along = ((a.x+b.x)/2 - ox)*dx + ((a.y+b.y)/2 - oy)*dy;
+        const sums = new Float64Array(13);
+        for(let k=1; k<20; k++){
+          const t = along + (k/20 - 0.5)*len*0.8;
+          for(let o=-6; o<=6; o++){
+            const x = Math.round(ox + dx*t + nx*o), y = Math.round(oy + dy*t + ny*o);
+            if(x >= 1 && x < W-1 && y >= 1 && y < H-1) sums[o+6] += mag[y*W + x];
+          }
+        }
+        let bestO = 0;
+        for(let o=-6; o<=6; o++) if(sums[o+6] > sums[bestO+6]) bestO = o;
+        if(sums[bestO+6] > 0) line = { nx, ny, c: line.c - bestO };
+        lines.push(line);
+      }
+      const out = [];
+      for(let s=0; s<4; s++){
+        const l1 = lines[(s+3)%4], l2 = lines[s];
+        const det = l1.nx*l2.ny - l2.nx*l1.ny;
+        if(Math.abs(det) < 1e-6) return quad;
+        const x = (l1.ny*l2.c - l2.ny*l1.c) / det, y = (l2.nx*l1.c - l1.nx*l2.c) / det;
+        // A corner may be just outside the photo (cut off), but not far outside.
+        if(x < -0.1*W || x > 1.1*W || y < -0.1*H || y > 1.1*H) return quad;
+        out.push({ x: Math.max(0, Math.min(W, x)), y: Math.max(0, Math.min(H, y)) });
+      }
+      return out;
+    }
+
+    // What share of the four sides runs along a real edge: sampled every few
+    // pixels, a sample counts if the brightness changes sharply within a
+    // pixel or two of it. A real page scores close to 1.
+    let strongEdge = 0;
+    {
+      const values = [];
+      for(let i=0; i<N; i+=8) values.push(mag[i]);
+      values.sort((a,b) => a-b);
+      strongEdge = Math.max(24, values[Math.floor(values.length*0.90)] || 0);
+    }
+    function edgeSupport(q){
+      let hits = 0, total = 0;
+      for(let s=0; s<4; s++){
+        const a = q[s], b = q[(s+1)%4];
+        const len = Math.hypot(b.x-a.x, b.y-a.y);
+        const nx = -(b.y-a.y)/len, ny = (b.x-a.x)/len;
+        const steps = Math.max(10, Math.round(len/3));
+        for(let k=1; k<steps; k++){
+          const t = 0.06 + 0.88*k/steps;
+          const px = a.x + (b.x-a.x)*t, py = a.y + (b.y-a.y)*t;
+          let m = 0;
+          for(let o=-2; o<=2; o++){
+            const x = Math.round(px + nx*o), y = Math.round(py + ny*o);
+            if(x >= 0 && x < W && y >= 0 && y < H) m = Math.max(m, mag[y*W + x]);
+          }
+          // A side running along the photo's own border (page cut off) counts as supported.
+          const onBorder = px < 2 || px > W-2 || py < 2 || py > H-2;
+          if(onBorder || m >= strongEdge*0.6) hits++;
+          total++;
+        }
+      }
+      return total ? hits/total : 0;
+    }
+
+    function quadArea(q){
+      let a = 0;
+      for(let i=0; i<4; i++){ const p = q[i], r = q[(i+1)%4]; a += p.x*r.y - r.x*p.y; }
+      return Math.abs(a)/2;
+    }
+
+    function convexHull(points){
+      const p = points.slice().sort((a,b) => a.x - b.x || a.y - b.y);
+      const cross = (o,a,b) => (a.x-o.x)*(b.y-o.y) - (a.y-o.y)*(b.x-o.x);
+      const lower = [], upper = [];
+      for(const q of p){ while(lower.length >= 2 && cross(lower[lower.length-2], lower[lower.length-1], q) <= 0) lower.pop(); lower.push(q); }
+      for(let i=p.length-1; i>=0; i--){ const q = p[i]; while(upper.length >= 2 && cross(upper[upper.length-2], upper[upper.length-1], q) <= 0) upper.pop(); upper.push(q); }
+      upper.pop(); lower.pop();
+      return lower.concat(upper);
+    }
+
+    const triArea = (a,b,c) => Math.abs((b.x-a.x)*(c.y-a.y) - (b.y-a.y)*(c.x-a.x)) / 2;
+
+    // The largest quadrilateral whose corners are hull points: for every
+    // diagonal, the farthest hull point on each side of it.
+    function largestQuad(hull){
+      let pts = hull;
+      // Long straight edges carry many nearly collinear points; thin them out.
+      if(pts.length > 80){ const step = pts.length / 80; pts = Array.from({length:80}, (_, k) => pts[Math.floor(k*step)]); }
+      const n = pts.length;
+      if(n < 4) return null;
+      let best = null, bestArea = 0;
+      for(let i=0; i<n; i++){
+        for(let k=i+2; k<n; k++){
+          if(i === 0 && k === n-1) continue;
+          let a1 = -1, j1 = -1, a2 = -1, j2 = -1;
+          for(let j=i+1; j<k; j++){ const a = triArea(pts[i], pts[j], pts[k]); if(a > a1){ a1 = a; j1 = j; } }
+          for(let j=k+1; j<n+i; j++){ const m = j % n; const a = triArea(pts[i], pts[m], pts[k]); if(a > a2){ a2 = a; j2 = m; } }
+          if(j1 < 0 || j2 < 0) continue;
+          if(a1 + a2 > bestArea){ bestArea = a1 + a2; best = [pts[i], pts[j1], pts[k], pts[j2]]; }
+        }
+      }
+      return best && { quad: best, area: bestArea };
+    }
+
+    // Puts the corners in the order top-left, top-right, bottom-right, bottom-left.
+    function orderCorners(q){
+      const cx = (q[0].x+q[1].x+q[2].x+q[3].x)/4, cy = (q[0].y+q[1].y+q[2].y+q[3].y)/4;
+      const s = q.slice().sort((a,b) => Math.atan2(a.y-cy, a.x-cx) - Math.atan2(b.y-cy, b.x-cx));
+      let first = 0;
+      for(let i=1; i<4; i++) if(s[i].x + s[i].y < s[first].x + s[first].y) first = i;
+      return [0,1,2,3].map(k => s[(first+k) % 4]);
+    }
+
+    function smallestAngle(q){
+      let min = 180;
+      for(let i=0; i<4; i++){
+        const a = q[(i+3)%4], b = q[i], c = q[(i+1)%4];
+        const v1x = a.x-b.x, v1y = a.y-b.y, v2x = c.x-b.x, v2y = c.y-b.y;
+        const cos = (v1x*v2x + v1y*v2y) / (Math.hypot(v1x,v1y) * Math.hypot(v2x,v2y) || 1);
+        min = Math.min(min, Math.acos(Math.max(-1, Math.min(1, cos))) * 180/Math.PI);
+      }
+      return min;
+    }
+
+    function judge(area){
+      if(!area || area.hull.length < 4) return null;
+      const found = largestQuad(area.hull);
+      if(!found) return null;
+      const quad = refineSides(orderCorners(found.quad), area.edge);
+      const qArea = quadArea(quad);
+      const share = qArea / N;
+      const fill = area.count / qArea;   // ~1 for a page; low for a blob that is not four-sided
+      if(share < 0.12 || share > 0.98) return null;
+      if(fill < 0.85 || fill > 1.2) return null;
+      if(smallestAngle(quad) < 35) return null;
+      const support = edgeSupport(quad);
+      // Sure when all four sides run along real edges and the page is comfortably sized.
+      const score = Math.max(0, Math.min(1, support * Math.min(1, share/0.25)));
+      return { corners: quad, score, debug: { support: +support.toFixed(2), fill: +fill.toFixed(2), share: +share.toFixed(2) } };
+    }
+
+    const candidates = [];
+
+    // 1. Brightness.
+    {
+      const hist = new Float64Array(256);
+      for(let i=0; i<N; i++) hist[Math.min(255, gray[i]|0)]++;
+      let sum = 0; for(let t=0; t<256; t++) sum += t*hist[t];
+      let sumB = 0, wB = 0, best = 0, threshold = 128;
+      for(let t=0; t<256; t++){
+        wB += hist[t]; if(!wB) continue;
+        const wF = N - wB; if(!wF) break;
+        sumB += t*hist[t];
+        const between = wB*wF*Math.pow(sumB/wB - (sum-sumB)/wF, 2);
+        if(between > best){ best = between; threshold = t; }
+      }
+      const light = new Uint8Array(N);
+      for(let i=0; i<N; i++) light[i] = gray[i] > threshold ? 1 : 0;
+      let lightOnBorder = 0, border = 0;
+      for(let x=0; x<W; x++){ lightOnBorder += light[x] + light[(H-1)*W+x]; border += 2; }
+      for(let y=0; y<H; y++){ lightOnBorder += light[y*W] + light[y*W+W-1]; border += 2; }
+      const backgroundIsLight = lightOnBorder > border/2;
+      const background = new Uint8Array(N);
+      for(let i=0; i<N; i++) background[i] = light[i] === (backgroundIsLight ? 1 : 0) ? 1 : 0;
+      const outside = floodFromBorder(background);
+      const inside = new Uint8Array(N);
+      for(let i=0; i<N; i++) inside[i] = outside[i] ? 0 : 1;
+      const c = judge(biggestArea(inside));
+      if(c){ c.method = "brightness"; candidates.push(c); }
+    }
+
+    // 2. Edges.
+    {
+      const values = [];
+      for(let i=0; i<N; i+=8) values.push(mag[i]);
+      values.sort((a,b) => a-b);
+      // Strong edges: well above what most of the photo has, and never tiny.
+      const cut = Math.max(24, values[Math.floor(values.length*0.90)] || 0);
+      const open = new Uint8Array(N);
+      for(let i=0; i<N; i++) open[i] = 1;
+      // Edges are thickened by one pixel so small gaps in the outline do not leak.
+      for(let y=0; y<H; y++){
+        for(let x=0; x<W; x++){
+          if(mag[y*W+x] < cut) continue;
+          for(let dy=-1; dy<=1; dy++) for(let dx=-1; dx<=1; dx++){
+            const xx = x+dx, yy = y+dy;
+            if(xx>=0 && xx<W && yy>=0 && yy<H) open[yy*W+xx] = 0;
+          }
+        }
+      }
+      const outside = floodFromBorder(open);
+      const inside = new Uint8Array(N);
+      for(let i=0; i<N; i++) inside[i] = outside[i] ? 0 : 1;
+      const c = judge(biggestArea(inside));
+      if(c){ c.method = "edges"; candidates.push(c); }
+    }
+
+    if(!candidates.length) return null;
+    // Best score wins. When two are about equally good, the bigger one: a
+    // shadow across the page can make one method stop short at the shadow,
+    // but nothing makes a method run past the paper's real edge with full
+    // edge support all round.
+    candidates.sort((a,b) => (Math.abs(a.score - b.score) < 0.05 ? quadArea(b.corners) - quadArea(a.corners) : b.score - a.score));
+    return Object.assign({}, candidates[0], { candidates });
+  }
+
+  // Runs detection on a photo and returns its corners in the photo's own
+  // pixels (or null). Kept with the photo, so Reset can go back to it.
+  function detectInImage(img){
+    try{
+      const scale = Math.min(1, DETECT_SIZE / Math.max(img.naturalWidth, img.naturalHeight));
+      const w = Math.max(8, Math.round(img.naturalWidth*scale)), h = Math.max(8, Math.round(img.naturalHeight*scale));
+      const c = document.createElement("canvas");
+      c.width = w; c.height = h;
+      const ctx = c.getContext("2d", { willReadFrequently: true });
+      ctx.drawImage(img, 0, 0, w, h);
+      const found = detectDocument(ctx.getImageData(0, 0, w, h).data, w, h);
+      if(!found) return null;
+      const sx = img.naturalWidth / w, sy = img.naturalHeight / h;
+      return { corners: found.corners.map(p => ({x: p.x*sx, y: p.y*sy})), score: found.score };
+    }catch(err){
+      return null;
+    }
+  }
+
+  let detected = null; // {corners (natural px), score} for the photo on the crop screen
 
   function initCropOverlay(){
     cropZoomCtrl.reset();
@@ -1023,13 +1475,25 @@
     displayScale = capturedImg.naturalWidth / rect.width;
     const w = rect.width, h = rect.height;
     cropBaseSize = {w, h};
-    const insetX = w*0.09, insetY = h*0.09;
-    corners = [
-      {x: insetX,   y: insetY},
-      {x: w-insetX, y: insetY},
-      {x: w-insetX, y: h-insetY},
-      {x: insetX,   y: h-insetY}
-    ];
+    if(detected){
+      // Corners straight onto the page that was found (Reset comes back here too).
+      corners = detected.corners.map(p => ({
+        x: Math.max(0, Math.min(w, p.x / displayScale)),
+        y: Math.max(0, Math.min(h, p.y / displayScale)),
+      }));
+      els.cropHint.textContent = detected.score >= AUTO_CROP_SCORE
+        ? "Page found · drag corners to adjust"
+        : "Page found, but not sure · check the corners";
+    } else {
+      const insetX = w*0.09, insetY = h*0.09;
+      corners = [
+        {x: insetX,   y: insetY},
+        {x: w-insetX, y: insetY},
+        {x: w-insetX, y: h-insetY},
+        {x: insetX,   y: h-insetY}
+      ];
+      els.cropHint.textContent = "No page found · drag corners or edges to trace it";
+    }
     els.cropSvg.setAttribute("viewBox", `0 0 ${w} ${h}`);
     els.cropWrap.style.width = w+"px";
     els.cropWrap.style.height = h+"px";
