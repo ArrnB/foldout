@@ -1,11 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  No permissions at all. Photos come from the system photo picker or the
-  camera app (which writes into a file this app hands it), and saved files
-  go to Downloads through MediaStore, which needs no permission on Android 10+.
-  The app has no internet permission either: the page is bundled inside it.
+  One permission: the camera, for Foldout's live viewfinder (it outlines the
+  page and can take the photo by itself). Frames are looked at on the phone
+  and never leave it. If it is refused, "Take Photo" uses the phone's camera
+  app instead. Library photos come through the system photo picker, and
+  saved files go to Downloads through MediaStore, neither of which needs a
+  permission on Android 10+. No internet permission: the page is bundled.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <queries>
         <intent>

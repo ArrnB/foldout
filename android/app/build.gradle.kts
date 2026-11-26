@@ -31,8 +31,8 @@ android {
         minSdk = 29
         targetSdk = 36
         // Play needs versionCode to go up with every upload.
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 3
+        versionName = "1.2.0"
     }
 
     sourceSets["main"].assets.srcDir(webDir)

@@ -1,9 +1,11 @@
 package app.foldout
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
 import android.content.ContentValues
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
@@ -11,6 +13,7 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.util.Base64
 import android.webkit.JavascriptInterface
+import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -24,6 +27,7 @@ import androidx.activity.addCallback
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -65,6 +69,18 @@ class MainActivity : ComponentActivity() {
             uri != null -> copyToCameraDir(uri)?.let { handToPage(it) }
         }
     }
+    /**
+     * The page asking for the live camera (its viewfinder with auto-capture).
+     * Granted once Android's camera permission is; if that is refused, the
+     * page falls back to the phone's own camera app.
+     */
+    private var pendingCameraRequest: PermissionRequest? = null
+    private val askCameraPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        val request = pendingCameraRequest ?: return@registerForActivityResult
+        pendingCameraRequest = null
+        if (granted) request.grant(arrayOf(PermissionRequest.RESOURCE_VIDEO_CAPTURE)) else request.deny()
+    }
+
     private val takePhoto = registerForActivityResult(ActivityResultContracts.TakePicture()) { saved ->
         val file = cameraFile
         when {
@@ -104,6 +120,7 @@ class MainActivity : ComponentActivity() {
             // it never needs to read files or content:// URLs directly.
             settings.allowFileAccess = false
             settings.allowContentAccess = true // the picked photo arrives as a content:// URL
+            settings.mediaPlaybackRequiresUserGesture = false // the camera preview plays by itself
             webViewClient = PageClient()
             webChromeClient = ChromeClient()
             addJavascriptInterface(Bridge(), "FoldoutAndroid")
@@ -158,6 +175,11 @@ class MainActivity : ComponentActivity() {
             takePhoto.launch(uriFor(file))
         } catch (e: ActivityNotFoundException) {
             openPicker() // no camera app: offer the library instead
+        } catch (e: SecurityException) {
+            // Android does not let an app that asks for the camera permission
+            // hand off to the camera app while that permission is refused.
+            Toast.makeText(this, R.string.camera_refused, Toast.LENGTH_LONG).show()
+            openPicker()
         }
     }
 
@@ -223,6 +245,26 @@ class MainActivity : ComponentActivity() {
             // "Take Photo" is the input with capture="environment".
             if (params.isCaptureEnabled) openCamera() else openPicker()
             return true
+        }
+
+        /** The page's live camera. Only the camera, and only for the app's own page. */
+        override fun onPermissionRequest(request: PermissionRequest) {
+            val wantsCameraOnly = request.resources.all { it == PermissionRequest.RESOURCE_VIDEO_CAPTURE }
+            if (request.origin.host != ASSET_HOST || !wantsCameraOnly) {
+                request.deny()
+                return
+            }
+            if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                request.grant(arrayOf(PermissionRequest.RESOURCE_VIDEO_CAPTURE))
+            } else {
+                pendingCameraRequest?.deny()
+                pendingCameraRequest = request
+                askCameraPermission.launch(Manifest.permission.CAMERA)
+            }
+        }
+
+        override fun onPermissionRequestCanceled(request: PermissionRequest) {
+            if (pendingCameraRequest == request) pendingCameraRequest = null
         }
     }
 
